@@ -32,6 +32,20 @@ int main()
     assert(f2.valid());
   }
 
+  {
+    // get
+    std::promise<int> p;
+
+    std::future<int> f = p.get_future();
+    assert(f.valid());
+
+    p.set_value(13);
+
+    int result = f.get();
+    assert(result == 13);
+    assert(!f.valid());
+  }
+
   std::cout << "OK" << std::endl;
 }
 
