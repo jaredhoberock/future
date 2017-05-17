@@ -1,0 +1,244 @@
+#pragma once
+
+#define __EXECUTION_REQUIRES(...) typename std::enable_if<(__VA_ARGS__)>::type* = nullptr
+
+#include <type_traits>
+#include <utility>
+#include <future>
+
+
+namespace std
+{
+namespace experimental
+{
+namespace execution
+{
+inline namespace v1
+{
+namespace detail
+{
+
+
+template<class...> 
+using void_t = void; 
+ 
+struct nonesuch 
+{ 
+  nonesuch() = delete; 
+  ~nonesuch() = delete; 
+  nonesuch(const nonesuch&) = delete; 
+  void operator=(const nonesuch&) = delete; 
+}; 
+ 
+ 
+template<class Default, class AlwaysVoid,
+         template<class...> class Op, class... Args> 
+struct detector 
+{ 
+  using value_t = std::false_type; 
+  using type = Default; 
+}; 
+ 
+ 
+template<class Default, template<class...> class Op, class... Args> 
+struct detector<Default, void_t<Op<Args...>>, Op, Args...> 
+{ 
+  using value_t = std::true_type; 
+  using type = Op<Args...>; 
+}; 
+ 
+ 
+template<template<class...> class Op, class... Args> 
+using is_detected = typename detector<nonesuch, void, Op, Args...>::value_t; 
+
+template<template<class...> class Op, class... Args> 
+using detected_t = typename detector<nonesuch, void, Op, Args...>::type; 
+
+template<class Expected, template<class...> class Op, class... Args>
+using is_detected_exact = std::is_same<Expected, detected_t<Op,Args...>>;
+
+template<class Default, template<class...> class Op, class... Args> 
+using detected_or = detector<Default, void, Op, Args...>; 
+ 
+template<class Default, template<class...> class Op, class... Args> 
+using detected_or_t = typename detected_or<Default,Op,Args...>::type; 
+
+
+template<class Future>
+using future_result_t = decltype(std::declval<Future>().get());
+
+
+template<class Result>
+struct dummy_nullary_function
+{
+  Result operator()() const;
+};
+
+
+template<class T>
+using execute_member_t = decltype(std::declval<T>().execute(std::declval<dummy_nullary_function<void>>()));
+
+template<class T, class Result = void>
+using then_execute_member_t = decltype(std::declval<T>().then_execute(std::declval<dummy_nullary_function<Result>>(), std::declval<std::future<void>&>()));
+
+template<class T>
+using execute_free_function_t = decltype(execute(std::declval<T>(), std::declval<dummy_nullary_function<void>>()));
+
+template<class T, class Result = void>
+using then_execute_free_function_t = decltype(then_execute(std::declval<T>(), std::declval<dummy_nullary_function<Result>>(), std::declval<std::future<void>&>()));
+
+
+} // end detail
+
+
+
+// member detection type traits
+template<class T>
+struct has_execute_member : detail::is_detected<detail::execute_member_t, T> {};
+
+// XXX this should probably check that the type of then_execute_member_t is executor_future_t<T,void>
+template<class T>
+struct has_then_execute_member : detail::is_detected<detail::then_execute_member_t, T> {};
+
+
+// free function detection type traits
+template<class T>
+struct has_execute_free_function : detail::is_detected<detail::execute_free_function_t, T> {};
+
+// XXX this should probably check that the type of then_execute_free_function_t is executor_future_t<T,void>
+template<class T>
+struct has_then_execute_free_function : detail::is_detected<detail::then_execute_free_function_t, T> {};
+
+
+// Executor type traits
+
+template<class Executor>
+struct executor_context
+{
+  using type = typename std::decay<decltype(std::declval<Executor>().context())>::type;
+};
+
+template<class Executor>
+using executor_context_t = typename executor_context<Executor>::type;
+
+
+template<class Executor, class T>
+struct executor_future
+{
+  // XXX this implementation doesn't seem right because it will work for types which aren't Executors
+
+  using type = detail::detected_or_t<
+    detail::detected_or_t<
+      std::future<T>,                       // otherwise, std::future<T>
+      detail::then_execute_free_function_t, // otherwise, check the result of then_execute(exec, ...)
+      Executor,
+      T
+    >,
+    detail::then_execute_member_t,          // checking the result of exec.then_execute(...) is our first choice
+    Executor,
+    T
+  >;
+};
+
+template<class Executor, class T>
+using executor_future_t = typename executor_future<Executor,T>::type;
+
+
+namespace detail
+{
+
+
+struct execute_customization_point
+{
+  template<class Executor, class Function,
+           __EXECUTION_REQUIRES(has_execute_member<Executor>::value)
+          >
+  inline void operator()(const Executor& exec, Function&& f) const
+  {
+    exec.execute(std::forward<Function>(f));
+  }
+
+  template<class Executor, class Function,
+           __EXECUTION_REQUIRES(has_execute_free_function<Executor>::value)
+          >
+  inline void operator()(const Executor& exec, Function&& f) const
+  {
+    execute(exec, std::forward<Function>(f));
+  }
+};
+
+
+struct then_execute_customization_point
+{
+  // this overload handles then_execute member and non-void Future
+  template<class Executor, class Function, class Future,
+           __EXECUTION_REQUIRES(has_then_execute_member<Executor>::value),
+           __EXECUTION_REQUIRES(!std::is_void<future_result_t<Future>>::value)
+          >
+  inline
+  executor_future_t<Executor, typename std::result_of<Function(future_result_t<Future>&)>::type>
+    operator()(const Executor& exec, Function&& f, Future& predecessor_future) const
+  {
+    return exec.then_execute(std::forward<Function>(f), predecessor_future);
+  }
+
+  // this overload handles then_execute member and void Future
+  template<class Executor, class Function, class Future,
+           __EXECUTION_REQUIRES(has_then_execute_member<Executor>::value),
+           __EXECUTION_REQUIRES(std::is_void<future_result_t<Future>>::value)
+          >
+  inline
+  executor_future_t<Executor, typename std::result_of<Function()>::type>
+    operator()(const Executor& exec, Function&& f, Future& predecessor_future) const
+  {
+    return exec.then_execute(std::forward<Function>(f), predecessor_future);
+  }
+
+  // this overload handles then_execute free function and non-void future
+  template<class Executor, class Function, class Future,
+           __EXECUTION_REQUIRES(has_then_execute_free_function<Executor>::value),
+           __EXECUTION_REQUIRES(!std::is_void<future_result_t<Future>>::value)
+          >
+  inline
+  executor_future_t<Executor, typename std::result_of<Function(future_result_t<Future>&)>::type>
+    operator()(const Executor& exec, Function&& f, Future& predecessor_future) const
+  {
+    return then_execute(exec, std::forward<Function>(f), predecessor_future);
+  }
+
+  // this overload handles then_execute free function and void future
+  template<class Executor, class Function, class Future,
+           __EXECUTION_REQUIRES(has_then_execute_free_function<Executor>::value),
+           __EXECUTION_REQUIRES(std::is_void<future_result_t<Future>>::value)
+          >
+  inline
+  executor_future_t<Executor, typename std::result_of<Function()>::type>
+    operator()(const Executor& exec, Function&& f, Future& predecessor_future) const
+  {
+    return then_execute(exec, std::forward<Function>(f), predecessor_future);
+  }
+};
+
+
+} // end detail
+
+
+// customization points
+// XXX these aren't implemented to avoid all of the pitfalls mentioned by Niebler
+namespace
+{
+
+constexpr detail::execute_customization_point      execute{};
+constexpr detail::then_execute_customization_point then_execute{};
+  
+
+} // end anonymous namespace
+
+
+} // end v1
+} // end execution
+} // end experimental
+} // end std
+
+#undef __EXECUTION_REQUIRES
+
