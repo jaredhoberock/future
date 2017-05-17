@@ -147,7 +147,7 @@ class async_future
     {
       if(!valid())
       {
-        // XXX throw exception here
+        // XXX we are encouraged to throw an exception here
       }
 
       T result = ptr_to_state_->get();
@@ -273,13 +273,15 @@ class made_ready_future
 template<class T>
 class future;
 
-
-// declare these functions so that future can friend them
+// declare these functions and types so that future can friend them
 template<class T>
 future<T> make_exceptional_future(std::exception_ptr e);
 
 template<class T>
 future<typename std::decay<T>::type> make_ready_future(T&& value);
+
+template<class T>
+class promise;
 
 
 template<class T>
@@ -341,18 +343,15 @@ class future
     }
 
   private:
-    // only promise<T> needs to be a friend, but I'm not sure how to express that
-    template<class U> friend class promise;
+    friend promise<T>;
 
     future(detail::async_future<T>&& value)
       : variant_(std::move(value))
     {}
 
-    // only make_exceptional_future<T> needs to be a friend, but I'm not sure how to express that
-    template<class U> friend future<U> make_exceptional_future(std::exception_ptr e);
-    
-    // only make_ready_future<T> needs to be a friend, but I'm not sure how to express that
-    template<class U> friend future<typename std::decay<U>::type> make_ready_future(U&& value);
+    friend future<T> make_exceptional_future<T>(std::exception_ptr e);
+
+    friend future<typename std::decay<T>::type> make_ready_future<T>(T&& value);
 
     future(detail::made_ready_future<T>&& value)
       : variant_(std::move(value))
