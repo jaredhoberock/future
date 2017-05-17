@@ -96,7 +96,7 @@ class asynchronous_state
       wait();
 
       // get the result or throw any exception
-      T result = std::experimental::visit(get_visitor(), maybe_result_.value());
+      T result = std::experimental::visit(get_visitor(), *maybe_result_);
 
       // invalidate ourself
       maybe_result_ = nullopt;
@@ -150,7 +150,12 @@ class async_future
         // XXX throw exception here
       }
 
-      return ptr_to_state_->get();
+      T result = ptr_to_state_->get();
+
+      // invalidate ourself
+      ptr_to_state_ = nullptr;
+
+      return result;
     }
 
     bool valid() const noexcept
@@ -181,10 +186,100 @@ class async_future
 
 // this is the type of future produced by make_ready_future()
 template<class T>
-class always_ready_future;
+class made_ready_future
+{
+  public:
+    // this constructor corresponds to an overload of promise::set_value()
+    made_ready_future(const T& value) noexcept
+      : maybe_result_(variant_type(value))
+    {}
+
+    // this constructor corresponds to an overload of promise::set_value()
+    made_ready_future(T&& value) noexcept
+      : maybe_result_(variant_type(std::move(value)))
+    {}
+
+    // this constructor corresponds to promise::set_exception
+    made_ready_future(std::exception_ptr e) noexcept
+      : maybe_result_(variant_type(e))
+    {}
+
+    made_ready_future(made_ready_future&& other) noexcept
+      : maybe_result_(std::move(other.maybe_result_))
+    {
+      // invalidate the other future
+      other.maybe_result_ = nullopt;
+    }
+
+    made_ready_future& operator=(made_ready_future&& other) noexcept
+    {
+      bool expected_valid = other.valid();
+
+      // move the other's result
+      maybe_result_ = std::move(other.maybe_result_);
+
+      // invalidate the other future
+      other.maybe_result_ = std::experimental::nullopt;
+
+      assert(!other.valid());
+      assert(valid() == expected_valid);
+
+      return *this;
+    }
+
+  private:
+    struct get_visitor
+    {
+      T operator()(T& value) const
+      {
+        return std::move(value);
+      }
+
+      T operator()(std::exception_ptr e) const
+      {
+        std::rethrow_exception(e);
+      }
+    };
+
+  public:
+    T get()
+    {
+      // get the result or throw any exception
+      T result = std::experimental::visit(get_visitor(), *maybe_result_);
+
+      // invalidate ourself
+      maybe_result_ = nullopt;
+
+      // return the result
+      return result;
+    }
+
+    bool valid() const noexcept
+    {
+      return maybe_result_.has_value();
+    }
+
+  private:
+    using variant_type = std::experimental::variant<T, std::exception_ptr>;
+
+    std::experimental::optional<variant_type> maybe_result_;
+};
 
 
 } // end detail
+
+
+// declare future so that the functions below can return it
+template<class T>
+class future;
+
+
+// declare these functions so that future can friend them
+template<class T>
+future<T> make_exceptional_future(std::exception_ptr e);
+
+template<class T>
+future<typename std::decay<T>::type> make_ready_future(T&& value);
 
 
 template<class T>
@@ -253,7 +348,22 @@ class future
       : variant_(std::move(value))
     {}
 
-    std::experimental::variant<detail::async_future<T>> variant_;
+    // only make_exceptional_future<T> needs to be a friend, but I'm not sure how to express that
+    template<class U> friend future<U> make_exceptional_future(std::exception_ptr e);
+    
+    // only make_ready_future<T> needs to be a friend, but I'm not sure how to express that
+    template<class U> friend future<typename std::decay<U>::type> make_ready_future(U&& value);
+
+    future(detail::made_ready_future<T>&& value)
+      : variant_(std::move(value))
+    {}
+
+    using variant_type = std::experimental::variant<
+      detail::async_future<T>,
+      detail::made_ready_future<T>
+    >;
+
+    variant_type variant_;
 };
 
 
@@ -360,7 +470,7 @@ class promise
         throw std::future_error(std::future_errc::promise_already_satisfied);
       }
 
-      ptr_to_state_->set_value(p);
+      ptr_to_state_->set_exception(p);
 
       // if the future is retrived, then we can release the state
       if(future_retrieved())
@@ -382,6 +492,27 @@ class promise
 
     std::shared_ptr<detail::asynchronous_state<T>> ptr_to_state_;
 };
+
+
+template<class T>
+future<typename std::decay<T>::type> make_ready_future(T&& value)
+{
+  return detail::made_ready_future<typename std::decay<T>::type>(std::forward<T>(value));
+}
+
+
+template<class T>
+future<T> make_exceptional_future(std::exception_ptr e)
+{
+  return detail::made_ready_future<T>(e);
+}
+
+
+template<class T, class E>
+future<T> make_exceptional_future(E ex)
+{
+  return std::experimental::make_exceptional_future<T>(std::make_exception_ptr(ex));
+}
 
 
 } // end v1
