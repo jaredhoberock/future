@@ -1,0 +1,320 @@
+#pragma once
+
+#include <experimental/optional>
+#include <experimental/variant>
+#include <utility>
+#include <exception>
+#include <mutex>
+#include <condition_variable>
+
+namespace std
+{
+namespace experimental
+{
+namespace v1
+{
+namespace detail
+{
+
+
+// this is the type of future produced by std::async(std::launch::deferred, ...)
+template<class T>
+class deferred_future;
+
+
+// this is the type of future produced by std::async(std::launch::async, ...) and std::promise::get_future()
+template<class T>
+class asynchronous_state
+{
+  public:
+    bool ready() const
+    {
+      std::lock_guard<std::mutex> guard(mutex_);
+
+      return maybe_value_ != nullptr;
+    }
+
+    void set_value(const T& value)
+    {
+      std::lock_guard<std::mutex> guard(mutex_);
+
+      maybe_value_ = value;
+    }
+
+    void set_value(T&& value)
+    {
+      std::lock_guard<std::mutex> guard(mutex_);
+
+      maybe_value_ = std::move(value);
+    }
+
+    void set_exception(std::exception_ptr e)
+    {
+      std::lock_guard<std::mutex> guard(mutex_);
+
+      maybe_value_ = e;
+    }
+
+    void wait() const
+    {
+      std::unique_lock<std::mutex> lock(mutex_);
+      condition_variable_.wait(lock, [this]{ return ready(); });
+    }
+
+  private:
+    struct get_visitor
+    {
+      T operator()(T& value) const
+      {
+        return std::move(value);
+      }
+
+      T operator()(std::exception_ptr e) const
+      {
+        std::rethrow_exception(e);
+      }
+    };
+
+  public:
+    T get()
+    {
+      // wait for readiness
+      wait();
+
+      // get the result or throw any exception
+      T result = std::experimental::visit(maybe_value_.value(), get_visitor());
+
+      // invalidate ourself
+      maybe_value_ = nullopt;
+
+      // return the result
+      return result;
+    }
+
+  private:
+    // these are mutable because .wait() is supposed to be const
+    mutable std::condition_variable condition_variable_;
+    mutable std::mutex mutex_;
+    std::experimental::optional<std::experimental::variant<T, std::exception_ptr>> maybe_value_;
+};
+
+
+template<class T>
+class async_future
+{
+  public:
+    async_future(std::shared_ptr<asynchronous_state<T>> ptr_to_state)
+      : ptr_to_state_(ptr_to_state)
+    {}
+
+    async_future() noexcept = default;
+
+    async_future(async_future&& other) noexcept
+      : ptr_to_state_(std::move(other.ptr_to_state_))
+    {}
+
+    async_future(const async_future&) = delete;
+
+    async_future& operator=(async_future&& other) noexcept
+    {
+      bool expected_valid = other.valid();
+
+      async_future(std::move(other)).swap(*this);
+
+      assert(!other.valid());
+      assert(valid() == expected_valid);
+
+      return *this;
+    }
+
+    T get()
+    {
+      if(!valid())
+      {
+        // XXX throw exception here
+      }
+
+      return ptr_to_state_->get();
+    }
+
+    bool valid() const noexcept
+    {
+      return ptr_to_state_ != nullptr;
+    }
+
+    void wait() const
+    {
+      if(!valid())
+      {
+        // XXX throw exception here
+      }
+
+      ptr_to_state_->wait();
+    }
+
+    // XXX TODO wait_for()
+
+    // XXX TODO wait_until()
+
+  private:
+    // XXX shared_ptr is probably overkill because there will only ever be
+    //     at most two owners of the asynchronous state
+    std::shared_ptr<asynchronous_state<T>> ptr_to_state_;
+};
+
+
+// this is the type of future produced by make_ready_future()
+template<class T>
+class always_ready_future;
+
+
+} // end detail
+
+
+template<class T>
+class future
+{
+  public:
+    // XXX TODO share()
+    
+  private:
+    struct get_visitor
+    {
+      template<class Future>
+      T operator()(Future& f) const
+      {
+        return f.get();
+      }
+    };
+
+  public:
+    T get()
+    {
+      return std::experimental::visit(variant_, get_visitor());
+    }
+
+  private:
+    struct valid_visitor
+    {
+      template<class Future>
+      bool operator()(const Future& f) const
+      {
+        return f.valid();
+      }
+    };
+
+  public:
+    bool valid() const noexcept
+    {
+      return std::experimental::visit(variant_, valid_visitor());
+    }
+
+  private:
+    struct wait_visitor
+    {
+      template<class Future>
+      void operator()(const Future& f) const
+      {
+        f.wait();
+      }
+    };
+
+  public:
+    void wait() const
+    {
+      std::experimental::visit(variant_, wait_visitor());
+    }
+
+  private:
+    // only promise<T> needs to be a friend, but I'm not sure how to express that
+    template<class U> friend class promise;
+
+    future(detail::async_future<T>&& value)
+      : variant_(std::move(value))
+    {}
+
+    std::experimental::variant<detail::async_future<T>> variant_;
+};
+
+
+template<class T>
+class promise
+{
+  public:
+    promise()
+      : ptr_to_state_(std::make_shared<detail::asynchronous_state<T>>())
+    {}
+
+    promise(const promise&) = delete;
+
+    promise(promise&& other)
+      : ptr_to_state_(std::move(other.ptr_to_state_))
+    {}
+
+    promise& operator=(promise&& other) noexcept
+    {
+      promise(std::move(other)).swap(*this);
+    }
+
+    promise& operator=(const promise&) = delete;
+
+    void swap(promise& other) noexcept
+    {
+      ptr_to_state_.swap(other.ptr_to_state_);
+    }
+
+    future<T> get_future()
+    {
+      if(ptr_to_state_ == nullptr)
+      {
+        // XXX throw exception here
+      }
+
+      return detail::async_future<T>(ptr_to_state_);
+    }
+
+    void set_value(const T& value)
+    {
+      if(ptr_to_state_ == nullptr)
+      {
+        // XXX throw exception here
+      }
+
+      ptr_to_state_->set_value(value);
+
+      ptr_to_state_ = nullptr;
+    }
+
+    void set_value(T&& value)
+    {
+      if(ptr_to_state_ == nullptr)
+      {
+        // XXX throw exception here
+      }
+
+      ptr_to_state_->set_value(std::move(value));
+
+      ptr_to_state_ = nullptr;
+    }
+
+    void set_exception(std::exception_ptr p)
+    {
+      if(ptr_to_state_ == nullptr)
+      {
+        // XXX throw exception here
+      }
+
+      ptr_to_state_->set_value(p);
+
+      ptr_to_state_ = nullptr;
+    }
+
+  private:
+    std::shared_ptr<detail::asynchronous_state<T>> ptr_to_state_;
+};
+
+
+} // end v1
+} // end experimental
+} // end std
+
