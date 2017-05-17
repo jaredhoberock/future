@@ -348,7 +348,12 @@ class promise
     {
       if(ptr_to_state_ == nullptr)
       {
-        // XXX throw exception here
+        throw std::future_error(std::future_errc::no_state);
+      }
+
+      if(ptr_to_state_->ready())
+      {
+        throw std::future_error(std::future_errc::promise_already_satisfied);
       }
 
       ptr_to_state_->set_value(p);
