@@ -33,7 +33,7 @@ int main()
   }
 
   {
-    // get
+    // get value
     std::promise<int> p;
 
     std::future<int> f = p.get_future();
@@ -44,6 +44,30 @@ int main()
     int result = f.get();
     assert(result == 13);
     assert(!f.valid());
+  }
+
+  {
+    // get exception
+    std::promise<int> p;
+
+    std::future<int> f = p.get_future();
+    assert(f.valid());
+
+    p.set_exception(std::make_exception_ptr(std::runtime_error("error")));
+
+    try
+    {
+      int result = f.get();
+      assert(0);
+    }
+    catch(std::runtime_error e)
+    {
+      assert(std::string(e.what()) == "error");
+    }
+    catch(...)
+    {
+      assert(0);
+    }
   }
 
   std::cout << "OK" << std::endl;
