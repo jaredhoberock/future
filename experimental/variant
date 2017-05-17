@@ -348,14 +348,14 @@ class variant : private detail::variant_storage<Types...>
       const T& other;
 
       __host__ __device__
-      void operator()(T& self)
+      void operator()(T& self) const
       {
         new (&self) T(other);
       }
 
       template<class U>
       __host__ __device__
-      void operator()(U&&) {}
+      void operator()(U&&) const {}
     };
 
   public:

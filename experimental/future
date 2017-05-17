@@ -2,16 +2,24 @@
 
 #include <experimental/optional>
 #include <experimental/variant>
+#include <type_traits>
 #include <utility>
 #include <exception>
+#include <stdexcept>
+#include <system_error>
 #include <mutex>
 #include <condition_variable>
+
+// XXX for now, we don't bother implementing a different std::experimental::v1::future_error
+//     so #include <future> to get access to std::future_error
+//     should check if the Concurrency TS specifies a different, experimental one
+#include <future>
 
 namespace std
 {
 namespace experimental
 {
-namespace v1
+inline namespace v1
 {
 namespace detail
 {
@@ -26,39 +34,45 @@ class deferred_future;
 template<class T>
 class asynchronous_state
 {
+  private:
+    bool unsafe_ready() const
+    {
+      return maybe_result_.has_value();
+    }
+
   public:
     bool ready() const
     {
       std::lock_guard<std::mutex> guard(mutex_);
 
-      return maybe_value_ != nullptr;
+      return unsafe_ready();
     }
 
     void set_value(const T& value)
     {
       std::lock_guard<std::mutex> guard(mutex_);
 
-      maybe_value_ = value;
+      maybe_result_ = variant_type(value);
     }
 
     void set_value(T&& value)
     {
       std::lock_guard<std::mutex> guard(mutex_);
 
-      maybe_value_ = std::move(value);
+      maybe_result_ = variant_type(std::move(value));
     }
 
     void set_exception(std::exception_ptr e)
     {
       std::lock_guard<std::mutex> guard(mutex_);
 
-      maybe_value_ = e;
+      maybe_result_ = variant_type(e);
     }
 
     void wait() const
     {
       std::unique_lock<std::mutex> lock(mutex_);
-      condition_variable_.wait(lock, [this]{ return ready(); });
+      condition_variable_.wait(lock, [this]{ return unsafe_ready(); });
     }
 
   private:
@@ -82,10 +96,10 @@ class asynchronous_state
       wait();
 
       // get the result or throw any exception
-      T result = std::experimental::visit(maybe_value_.value(), get_visitor());
+      T result = std::experimental::visit(get_visitor(), maybe_result_.value());
 
       // invalidate ourself
-      maybe_value_ = nullopt;
+      maybe_result_ = nullopt;
 
       // return the result
       return result;
@@ -95,7 +109,9 @@ class asynchronous_state
     // these are mutable because .wait() is supposed to be const
     mutable std::condition_variable condition_variable_;
     mutable std::mutex mutex_;
-    std::experimental::optional<std::experimental::variant<T, std::exception_ptr>> maybe_value_;
+
+    using variant_type = std::experimental::variant<T, std::exception_ptr>;
+    std::experimental::optional<variant_type> maybe_result_;
 };
 
 
@@ -190,7 +206,7 @@ class future
   public:
     T get()
     {
-      return std::experimental::visit(variant_, get_visitor());
+      return std::experimental::visit(get_visitor(), variant_);
     }
 
   private:
@@ -206,7 +222,7 @@ class future
   public:
     bool valid() const noexcept
     {
-      return std::experimental::visit(variant_, valid_visitor());
+      return std::experimental::visit(valid_visitor(), variant_);
     }
 
   private:
@@ -222,7 +238,7 @@ class future
   public:
     void wait() const
     {
-      std::experimental::visit(variant_, wait_visitor());
+      std::experimental::visit(wait_visitor(), variant_);
     }
 
   private:
@@ -267,34 +283,65 @@ class promise
     {
       if(ptr_to_state_ == nullptr)
       {
-        // XXX throw exception here
+        throw std::future_error(std::future_errc::no_state);
       }
 
-      return detail::async_future<T>(ptr_to_state_);
+      if(future_retrieved())
+      {
+        throw std::future_error(std::future_errc::future_already_retrieved);
+      }
+
+      future<T> result = detail::async_future<T>(ptr_to_state_);
+
+      // if the promise is satisfied, then we can release the state
+      if(promise_satisfied())
+      {
+        ptr_to_state_ = nullptr;
+      }
+
+      return result;
     }
 
     void set_value(const T& value)
     {
       if(ptr_to_state_ == nullptr)
       {
-        // XXX throw exception here
+        throw std::future_error(std::future_errc::no_state);
+      }
+
+      if(promise_satisfied())
+      {
+        throw std::future_error(std::future_errc::promise_already_satisfied);
       }
 
       ptr_to_state_->set_value(value);
 
-      ptr_to_state_ = nullptr;
+      // if the future is retrived, then we can release the state
+      if(future_retrieved())
+      {
+        ptr_to_state_ = nullptr;
+      }
     }
 
     void set_value(T&& value)
     {
       if(ptr_to_state_ == nullptr)
       {
-        // XXX throw exception here
+        throw std::future_error(std::future_errc::no_state);
+      }
+
+      if(ptr_to_state_->ready())
+      {
+        throw std::future_error(std::future_errc::promise_already_satisfied);
       }
 
       ptr_to_state_->set_value(std::move(value));
 
-      ptr_to_state_ = nullptr;
+      // if the future is retrived, then we can release the state
+      if(future_retrieved())
+      {
+        ptr_to_state_ = nullptr;
+      }
     }
 
     void set_exception(std::exception_ptr p)
@@ -306,10 +353,24 @@ class promise
 
       ptr_to_state_->set_value(p);
 
-      ptr_to_state_ = nullptr;
+      // if the future is retrived, then we can release the state
+      if(future_retrieved())
+      {
+        ptr_to_state_ = nullptr;
+      }
     }
 
   private:
+    bool future_retrieved() const
+    {
+      return ptr_to_state_.use_count() > 1;
+    }
+
+    bool promise_satisfied() const
+    {
+      return ptr_to_state_->ready();
+    }
+
     std::shared_ptr<detail::asynchronous_state<T>> ptr_to_state_;
 };
 
