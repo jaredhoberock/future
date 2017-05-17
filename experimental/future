@@ -135,7 +135,7 @@ class async_future
     {
       bool expected_valid = other.valid();
 
-      async_future(std::move(other)).swap(*this);
+      ptr_to_state_ = std::move(other.ptr_to_state_);
 
       assert(!other.valid());
       assert(valid() == expected_valid);
