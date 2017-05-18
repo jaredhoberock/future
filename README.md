@@ -8,7 +8,6 @@ There are two cases:
   1. The executor is natively two-way
   2. The executor is natively one-way
 
-
 ### The executor is natively two-way.
   
 Natively two-way executors have either `then_execute` or `bulk_then_execute` functions.
