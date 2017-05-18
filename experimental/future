@@ -11,6 +11,8 @@
 #include <system_error>
 #include <mutex>
 #include <condition_variable>
+#include <experimental/execution>
+
 
 // XXX for now, we don't bother implementing a different std::experimental::v1::future_error
 //     so #include <future> to get access to std::future_error
@@ -117,6 +119,35 @@ class asynchronous_state
 };
 
 
+
+template<class Future>
+struct future_result;
+
+template<template<class> class Future, class Result>
+struct future_result<Future<Result>>
+{
+  using type = Result;
+};
+
+template<class Future>
+using future_result_t = typename future_result<Future>::type;
+
+
+
+template<class Future, class T>
+struct future_rebind_result;
+
+template<template<class> class Future, class FromType, class ToType>
+struct future_rebind_result<Future<FromType>,ToType>
+{
+  using type = Future<ToType>;
+};
+
+template<class Future, class T>
+using future_rebind_result_t = typename future_rebind_result<Future,T>::type;
+
+
+
 template<class T>
 class async_future
 {
@@ -143,6 +174,13 @@ class async_future
       assert(valid() == expected_valid);
 
       return *this;
+    }
+
+    static async_future make_ready(const T& value)
+    {
+      async_future result(std::make_shared<detail::asynchronous_state<T>>());
+      result.ptr_to_state_->set_value(value);
+      return result;
     }
 
     bool is_ready() const
@@ -183,6 +221,15 @@ class async_future
     // XXX TODO wait_for()
 
     // XXX TODO wait_until()
+
+    template<class Executor, class F>
+    execution::executor_future_t<
+      Executor,
+      typename std::result_of<
+        typename std::decay<F>::type(async_future)
+      >
+    >
+      then(const Executor& exec, F&& func);
 
   private:
     // XXX shared_ptr is probably overkill because there will only ever be
@@ -658,6 +705,42 @@ future<T> make_exceptional_future(E ex)
 }
 
 
+namespace detail
+{
+
+
+template<class T, class OneWayExecutor, class F,
+         __FUTURE_REQUIRES(
+           (execution::has_execute_member<OneWayExecutor>::value or execution::has_execute_free_function<OneWayExecutor>::value) and
+           (!execution::has_then_execute_member<OneWayExecutor>::value and !execution::has_then_execute_free_function<OneWayExecutor>::value)
+         )
+        >
+execution::executor_future_t<
+  OneWayExecutor,
+  typename std::result_of<
+    typename std::decay<F>::type(async_future<T>)
+  >
+>
+then_impl(async_future<F>& predecessor_future, const OneWayExecutor& exec, F&& func)
+{
+}
+
+
+template<class T>
+template<class Executor, class F>
+execution::executor_future_t<
+  Executor,
+  typename std::result_of<
+    typename std::decay<F>::type(async_future<T>)
+  >
+>
+async_future<T>::then(const Executor& exec, F&& func)
+{
+  return detail::then_impl(*this, exec, std::forward<F>(func));
+}
+
+
+} // end detail
 } // end v1
 } // end experimental
 } // end std
