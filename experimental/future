@@ -1,4 +1,6 @@
 #pragma once
+ 
+#define __FUTURE_REQUIRES(...) typename std::enable_if<(__VA_ARGS__)>::type* = nullptr
 
 #include <experimental/optional>
 #include <experimental/variant>
@@ -393,6 +395,18 @@ class future
 };
 
 
+namespace detail
+{
+
+
+// declare packaged_task so that promise can friend it
+template<class T>
+class packaged_task;
+
+
+} // end detail
+
+
 template<class T>
 class promise
 {
@@ -419,7 +433,8 @@ class promise
       ptr_to_state_.swap(other.ptr_to_state_);
     }
 
-    future<T> get_future()
+  private:
+    detail::async_future<T> get_async_future()
     {
       if(ptr_to_state_ == nullptr)
       {
@@ -431,7 +446,7 @@ class promise
         throw std::future_error(std::future_errc::future_already_retrieved);
       }
 
-      future<T> result = detail::async_future<T>(ptr_to_state_);
+      detail::async_future<T> result = detail::async_future<T>(ptr_to_state_);
 
       // if the promise is satisfied, then we can release the state
       if(promise_satisfied())
@@ -440,6 +455,12 @@ class promise
       }
 
       return result;
+    }
+
+  public:
+    future<T> get_future()
+    {
+      return get_async_future();
     }
 
     void set_value(const T& value)
@@ -506,6 +527,8 @@ class promise
     }
 
   private:
+    template<class U> friend class detail::packaged_task;
+
     bool future_retrieved() const
     {
       return ptr_to_state_.use_count() > 1;
@@ -518,6 +541,100 @@ class promise
 
     std::shared_ptr<detail::asynchronous_state<T>> ptr_to_state_;
 };
+
+
+namespace detail
+{
+
+
+template<class T>
+class packaged_task;
+
+
+template<class R, class... Args>
+class packaged_task<R(Args...)>
+{
+  public:
+    packaged_task() noexcept : task_(), future_() {}
+
+    packaged_task(const packaged_task&) = delete;
+
+  private:
+    template<class F,
+             class Result = R,
+             __FUTURE_REQUIRES(std::is_void<Result>::value)
+            >
+    static void fulfill_promise(promise<R>& p, F&& f, Args... args)
+    {
+      std::forward<F>(f)(args...);
+      p.set_value();
+    }
+
+    template<class F,
+             class Result = R,
+             __FUTURE_REQUIRES(!std::is_void<Result>::value)
+            >
+    static void fulfill_promise(promise<R>& p, F&& f, Args... args)
+    {
+      p.set_value(std::forward<F>(f)(args...));
+    }
+
+  public:
+    template<class F>
+    explicit packaged_task(F&& f)
+      : packaged_task()
+    {
+      promise<R> p;
+
+      future_ = p.get_async_future();
+
+      task_ = [f = std::forward<F>(f), p = std::move(p)](Args... args) mutable
+      {
+        fulfill_promise(p, f, args...);
+      };
+    }
+
+    packaged_task(packaged_task&& other) noexcept
+      : task_(std::move(other.task_)),
+        future_(std::move(other.future_))
+    {}
+
+    packaged_task& operator=(const packaged_task&) = delete;
+
+    packaged_task& operator=(packaged_task&& other) noexcept
+    {
+      packaged_task(std::move(other)).swap(*this);
+      return *this;
+    }
+
+    bool valid() const noexcept
+    {
+      return static_cast<bool>(task_) && future_.valid();
+    }
+
+    void swap(packaged_task& other) noexcept
+    {
+      task_.swap(other.task_);
+      std::swap(future_, other.future_);
+    }
+
+    async_future<R> get_async_future()
+    {
+      return std::move(future_);
+    }
+
+    void operator()(Args... args)
+    {
+      task_(args...);
+    }
+
+  private:
+    std::function<R(Args...)> task_;
+    async_future<R> future_;
+};
+
+
+} // end detail
 
 
 template<class T>
@@ -544,4 +661,6 @@ future<T> make_exceptional_future(E ex)
 } // end v1
 } // end experimental
 } // end std
+
+#undef __FUTURE_REQUIRES
 
