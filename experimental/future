@@ -71,8 +71,9 @@ class asynchronous_state
 
     void wait() const
     {
+      std::condition_variable cv;
       std::unique_lock<std::mutex> lock(mutex_);
-      condition_variable_.wait(lock, [this]{ return unsafe_ready(); });
+      cv.wait(lock, [this]{ return unsafe_ready(); });
     }
 
   private:
@@ -106,8 +107,7 @@ class asynchronous_state
     }
 
   private:
-    // these are mutable because .wait() is supposed to be const
-    mutable std::condition_variable condition_variable_;
+    // this mutex is mutable because .wait() is supposed to be const
     mutable std::mutex mutex_;
 
     using variant_type = std::experimental::variant<T, std::exception_ptr>;

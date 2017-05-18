@@ -1,7 +1,7 @@
 # future
-Implementation of std::experimental::future from the C++ Concurrency TS
+Implementation of `std::experimental::future` from the C++ Concurrency TS
 
-## Notes on the possible implementation of `future.then(exec, func)`
+## Notes on the possible implementation of `std::experimental::future.then(exec, func)`
 
 There are two cases:
 
@@ -11,7 +11,7 @@ There are two cases:
 
 ### The executor is natively two-way.
   
-Two-way executors have either `then_execute` or `bulk_then_execute` functions.
+Natively two-way executors have either `then_execute` or `bulk_then_execute` functions.
 
 There are two sub-cases:
 
@@ -24,7 +24,7 @@ This assumes `then_execute()` knows what to do and will not simply turn around a
 
 1.2 When the executor's future is a different type of future, we should again call `execution::then_execute` and also introduce a continuation that returns `future_from_executor.get()`.
 
-This assumes that the future has a mechanism for creating and containing a continuation.
+This assumes that the future type has a mechanism for creating and containing a continuation.
 
 Cases 1.1 and 1.2 ensure that the predecessor future is always presented to the executor, in the cases where the executor is able to consume it.
 
@@ -34,5 +34,5 @@ Natively one-way executors are oblivious to futures, because they have either `e
 
 In this case, `future.then()` should create a continuation (capturing the executor) and this continuation should call `execution::execute()`. If the future is not ready at the time `.then()` is called, then `promise.set_value()` would call this continuation.
 
-This assumes that future has a mechanism for creating and containing a continuation.
+This assumes that the future type has a mechanism for creating and containing a continuation.
 
