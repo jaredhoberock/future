@@ -35,17 +35,17 @@ template<class T>
 class asynchronous_state
 {
   private:
-    bool unsafe_ready() const
+    bool unsafe_is_ready() const
     {
       return maybe_result_.has_value();
     }
 
   public:
-    bool ready() const
+    bool is_ready() const
     {
       std::lock_guard<std::mutex> guard(mutex_);
 
-      return unsafe_ready();
+      return unsafe_is_ready();
     }
 
     void set_value(const T& value)
@@ -73,7 +73,7 @@ class asynchronous_state
     {
       std::condition_variable cv;
       std::unique_lock<std::mutex> lock(mutex_);
-      cv.wait(lock, [this]{ return unsafe_ready(); });
+      cv.wait(lock, [this]{ return unsafe_is_ready(); });
     }
 
   private:
@@ -141,6 +141,11 @@ class async_future
       assert(valid() == expected_valid);
 
       return *this;
+    }
+
+    bool is_ready() const
+    {
+      return ptr_to_state_->is_ready();
     }
 
     T get()
@@ -227,6 +232,12 @@ class made_ready_future
       return *this;
     }
 
+    constexpr bool is_ready() const
+    {
+      // this assumes valid() is true, of course
+      return true;
+    }
+
   private:
     struct get_visitor
     {
@@ -293,6 +304,22 @@ class future
     {}
 
     // XXX TODO share()
+
+  private:
+    struct is_ready_visitor
+    {
+      template<class Future>
+      bool is_ready(const Future& f) const
+      {
+        return f.is_ready();
+      }
+    };
+
+  public:
+    bool is_ready() const
+    {
+      return std::experimental::visit(is_ready_visitor(), variant_);
+    }
     
   private:
     struct get_visitor
@@ -443,7 +470,7 @@ class promise
         throw std::future_error(std::future_errc::no_state);
       }
 
-      if(ptr_to_state_->ready())
+      if(ptr_to_state_->is_ready())
       {
         throw std::future_error(std::future_errc::promise_already_satisfied);
       }
@@ -464,7 +491,7 @@ class promise
         throw std::future_error(std::future_errc::no_state);
       }
 
-      if(ptr_to_state_->ready())
+      if(ptr_to_state_->is_ready())
       {
         throw std::future_error(std::future_errc::promise_already_satisfied);
       }
@@ -486,7 +513,7 @@ class promise
 
     bool promise_satisfied() const
     {
-      return ptr_to_state_->ready();
+      return ptr_to_state_->is_ready();
     }
 
     std::shared_ptr<detail::asynchronous_state<T>> ptr_to_state_;
