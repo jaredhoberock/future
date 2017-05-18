@@ -5,10 +5,13 @@ Implementation of std::experimental::future from the C++ Concurrency TS
 
 There are two cases:
 
-  1. The executor is two-way
-  2. The executor is one-way
+  1. The executor is natively two-way
+  2. The executor is natively one-way
 
-1. The executor is two-way. Therefore, it has either then_execute or bulk_then_execute functions.
+
+### The executor is natively two-way.
+  
+Two-way executors have either `then_execute` or `bulk_then_execute` functions.
 
 There are two sub-cases:
 
@@ -25,7 +28,9 @@ This assumes that the future has a mechanism for creating and containing a conti
 
 Cases 1.1 and 1.2 ensure that the predecessor future is always presented to the executor, in the cases where the executor is able to consume it.
 
-2. Otherwise, the executor is oblivious to futures, because it is a one-way executor.
+### The executor is natively one-way.
+
+Natively one-way executors are oblivious to futures, because they have either `execute` or `bulk_execute` functions, and these functions neither consume nor produce futures.
 
 In this case, `future.then()` should create a continuation (capturing the executor) and this continuation should call `execution::execute()`. If the future is not ready at the time `.then()` is called, then `promise.set_value()` would call this continuation.
 
