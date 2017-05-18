@@ -14,14 +14,14 @@ Natively two-way executors have either `then_execute` or `bulk_then_execute` fun
 
 There are two sub-cases:
 
-  1. The executor returns the same kind of future as the predecessor future.
-  2. The executor returns a different kind of future as the predecessor future.
+  1. The executor returns a kind of future which can be converted into the same type of future as the predecessor future.
+  2. The executor returns a kind of future which cannot be converted into the same type of future as the predecessor future.
 
-1.1 When the kind of future returned by `then_execute` is the same kind as the `predecessor` future, `predecessor.then(exec, f)` should just call `execution::then_execute(exec, f, predecessor)`.
+1.1 When the kind of future returned by `then_execute` can be converted into the same kind as the `predecessor` future, `predecessor.then(exec, f)` should just call `execution::then_execute(exec, f, predecessor)`.
 
 This assumes `then_execute()` knows what to do and will not simply turn around and call `predecessor.then()`, which would create a cycle.
 
-1.2 When the kind of future returned by `then_execute` is different from the `predecessor` future, we should again call `execution::then_execute` and also introduce a continuation that returns `future_from_executor.get()`.
+1.2 When the kind of future returned by `then_execute` cannot be converted into the same kind as the `predecessor` future, we should again call `execution::then_execute` and also introduce a continuation that returns `future_from_executor.get()`.
 
 This assumes that the future type has a mechanism for creating and containing a continuation.
 
