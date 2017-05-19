@@ -91,3 +91,35 @@ The following is a sample implementation of `.then()` for one-way executors:
       return result_future;
     }
 
+The following is a sample implementation of `.set_continuation()` for `experimental::future<T>`'s asynchronous state object:
+
+    template<class Executor, class Function>
+    void set_continuation(const Executor& exec, Function&& f)
+    {
+      // create a continuation that calls execution::execute()
+      auto continuation = [exec, f = move(f)] (experimental::future<T>&& predecessor_future) mutable
+      {
+        execution::execute(exec, [f = move(f), predecessor_future = move(predecessor_future)] () mutable
+        {
+          f(move(predecessor_future));
+        });
+      };
+
+      unique_lock<mutex> lock(this->mutex_);
+
+      if(this->is_ready_)
+      {
+        // the state is ready, invoke the continuation immediately
+
+        // unlock here so that the future passed to the continuation below doesn't block in .get()
+        lock.unlock();
+
+        continuation(this->to_future());
+      }
+      else
+      {
+        // the state is not yet ready, store the continuation for later
+        this->continuation_ = unique_function<void(experimental::future<T>&&)>(move(continuation));
+      }
+    }
+
