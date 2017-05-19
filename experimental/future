@@ -11,13 +11,10 @@
 #include <system_error>
 #include <mutex>
 #include <condition_variable>
+#include <future> // for std::future_error
 #include <experimental/execution>
+#include <experimental/detail/hacky_unique_function.hpp>
 
-
-// XXX for now, we don't bother implementing a different std::experimental::v1::future_error
-//     so #include <future> to get access to std::future_error
-//     should check if the Concurrency TS specifies a different, experimental one
-#include <future>
 
 namespace std
 {
@@ -36,7 +33,12 @@ class deferred_future;
 
 // this is the type of future produced by std::async(std::launch::async, ...) and std::promise::get_future()
 template<class T>
-class asynchronous_state
+class async_future;
+
+
+// this is the state shared between async_future<T> and promise<T>
+template<class T>
+class asynchronous_state : public std::enable_shared_from_this<asynchronous_state<T>>
 {
   private:
     bool unsafe_is_ready() const
@@ -57,6 +59,8 @@ class asynchronous_state
       std::lock_guard<std::mutex> guard(mutex_);
 
       maybe_result_ = variant_type(value);
+
+      unsafe_invoke_continuation_if();
     }
 
     void set_value(T&& value)
@@ -64,6 +68,8 @@ class asynchronous_state
       std::lock_guard<std::mutex> guard(mutex_);
 
       maybe_result_ = variant_type(std::move(value));
+
+      unsafe_invoke_continuation_if();
     }
 
     void set_exception(std::exception_ptr e)
@@ -71,6 +77,8 @@ class asynchronous_state
       std::lock_guard<std::mutex> guard(mutex_);
 
       maybe_result_ = variant_type(e);
+
+      unsafe_invoke_continuation_if();
     }
 
     void wait() const
@@ -110,12 +118,33 @@ class asynchronous_state
       return result;
     }
 
+    void set_continuation(hacky_unique_function<void(async_future<T>&&)>&& continuation)
+    {
+      std::lock_guard<std::mutex> guard(mutex_);
+
+      continuation_ = std::move(continuation);
+    }
+
+    async_future<T> to_async_future();
+
   private:
+    // invokes the continuation, if it exists
+    void unsafe_invoke_continuation_if()
+    {
+      if(continuation_)
+      {
+        continuation_(to_async_future());
+      }
+    }
+
     // this mutex is mutable because .wait() is supposed to be const
     mutable std::mutex mutex_;
 
     using variant_type = std::experimental::variant<T, std::exception_ptr>;
     std::experimental::optional<variant_type> maybe_result_;
+
+    // asynchronous_state may or may not have a continuation stored in it
+    hacky_unique_function<void(async_future<T>&&)> continuation_;
 };
 
 
@@ -222,16 +251,50 @@ class async_future
 
     // XXX TODO wait_until()
 
+  private:
+    template<class U>
+    using async_future_clang_workaround = async_future<U>;
+
+  public:
     template<class Executor, class F>
-    execution::executor_future_t<
+    execution::detail::executor_future_or_t<
       Executor,
       typename std::result_of<
         typename std::decay<F>::type(async_future)
-      >
+      >::type,
+
+      // XXX WAR issue with clang
+      //async_future
+      async_future_clang_workaround
     >
       then(const Executor& exec, F&& func);
 
   private:
+    template<class Function>
+    void set_continuation(Function&& func)
+    {
+      if(!valid())
+      {
+        // XXX we should probably throw an exception here
+      }
+
+      hacky_unique_function<void(async_future&&)> continuation = std::forward<Function>(func);
+
+      ptr_to_state_->set_continuation(std::move(continuation));
+
+      // invalidate ourself
+      ptr_to_state_ = nullptr;
+    }
+
+    template<class U, class OneWayExecutor, class F>
+    friend
+    async_future<
+      typename std::result_of<
+        typename std::decay<F>::type(async_future<U>)
+      >::type
+    >
+    one_way_executor_then(async_future<U>& predecessor_future, const OneWayExecutor& exec, F&& func);
+
     // XXX shared_ptr is probably overkill because there will only ever be
     //     at most two owners of the asynchronous state
     std::shared_ptr<asynchronous_state<T>> ptr_to_state_;
@@ -466,11 +529,15 @@ class promise
 
     promise(promise&& other)
       : ptr_to_state_(std::move(other.ptr_to_state_))
-    {}
+    {
+      assert(valid());
+    }
 
     promise& operator=(promise&& other) noexcept
     {
       promise(std::move(other)).swap(*this);
+
+      assert(valid());
     }
 
     promise& operator=(const promise&) = delete;
@@ -480,10 +547,15 @@ class promise
       ptr_to_state_.swap(other.ptr_to_state_);
     }
 
+    bool valid() const noexcept
+    {
+      return static_cast<bool>(ptr_to_state_);
+    }
+
   private:
     detail::async_future<T> get_async_future()
     {
-      if(ptr_to_state_ == nullptr)
+      if(!valid())
       {
         throw std::future_error(std::future_errc::no_state);
       }
@@ -493,12 +565,12 @@ class promise
         throw std::future_error(std::future_errc::future_already_retrieved);
       }
 
-      detail::async_future<T> result = detail::async_future<T>(ptr_to_state_);
+      detail::async_future<T> result = ptr_to_state_->to_async_future();
 
       // if the promise is satisfied, then we can release the state
       if(promise_satisfied())
       {
-        ptr_to_state_ = nullptr;
+        release();
       }
 
       return result;
@@ -512,7 +584,7 @@ class promise
 
     void set_value(const T& value)
     {
-      if(ptr_to_state_ == nullptr)
+      if(!valid())
       {
         throw std::future_error(std::future_errc::no_state);
       }
@@ -527,13 +599,13 @@ class promise
       // if the future is retrived, then we can release the state
       if(future_retrieved())
       {
-        ptr_to_state_ = nullptr;
+        release();
       }
     }
 
     void set_value(T&& value)
     {
-      if(ptr_to_state_ == nullptr)
+      if(!valid())
       {
         throw std::future_error(std::future_errc::no_state);
       }
@@ -548,13 +620,13 @@ class promise
       // if the future is retrived, then we can release the state
       if(future_retrieved())
       {
-        ptr_to_state_ = nullptr;
+        release();
       }
     }
 
     void set_exception(std::exception_ptr p)
     {
-      if(ptr_to_state_ == nullptr)
+      if(!valid())
       {
         throw std::future_error(std::future_errc::no_state);
       }
@@ -569,12 +641,17 @@ class promise
       // if the future is retrived, then we can release the state
       if(future_retrieved())
       {
-        ptr_to_state_ = nullptr;
+        release();
       }
     }
 
   private:
     template<class U> friend class detail::packaged_task;
+
+    void release() noexcept
+    {
+      ptr_to_state_ = nullptr;
+    }
 
     bool future_retrieved() const
     {
@@ -602,7 +679,7 @@ template<class R, class... Args>
 class packaged_task<R(Args...)>
 {
   public:
-    packaged_task() noexcept : task_(), future_() {}
+    packaged_task() noexcept : task_(), promise_() {}
 
     packaged_task(const packaged_task&) = delete;
 
@@ -613,7 +690,7 @@ class packaged_task<R(Args...)>
             >
     static void fulfill_promise(promise<R>& p, F&& f, Args... args)
     {
-      std::forward<F>(f)(args...);
+      std::forward<F>(f)(std::forward<Args>(args)...);
       p.set_value();
     }
 
@@ -623,27 +700,26 @@ class packaged_task<R(Args...)>
             >
     static void fulfill_promise(promise<R>& p, F&& f, Args... args)
     {
-      p.set_value(std::forward<F>(f)(args...));
+      p.set_value(std::forward<F>(f)(std::forward<Args>(args)...));
     }
 
   public:
-    template<class F>
+    template<class F,
+             class Result = typename std::result_of<F(Args...)>::type,
+             __FUTURE_REQUIRES(std::is_convertible<Result,R>::value)
+            >
     explicit packaged_task(F&& f)
       : packaged_task()
     {
-      promise<R> p;
-
-      future_ = p.get_async_future();
-
-      task_ = [f = std::forward<F>(f), p = std::move(p)](Args... args) mutable
+      task_ = [f = std::forward<F>(f)](promise<R>& promise, Args... args) mutable
       {
-        fulfill_promise(p, f, args...);
+        fulfill_promise(promise, f, std::forward<Args>(args)...);
       };
     }
 
     packaged_task(packaged_task&& other) noexcept
       : task_(std::move(other.task_)),
-        future_(std::move(other.future_))
+        promise_(std::move(other.promise_))
     {}
 
     packaged_task& operator=(const packaged_task&) = delete;
@@ -656,28 +732,28 @@ class packaged_task<R(Args...)>
 
     bool valid() const noexcept
     {
-      return static_cast<bool>(task_) && future_.valid();
+      return static_cast<bool>(task_) && promise_.valid();
     }
 
     void swap(packaged_task& other) noexcept
     {
       task_.swap(other.task_);
-      std::swap(future_, other.future_);
+      promise_.swap(other.promise_);
     }
 
     async_future<R> get_async_future()
     {
-      return std::move(future_);
+      return promise_.get_async_future();
     }
 
     void operator()(Args... args)
     {
-      task_(args...);
+      task_(promise_, std::forward<Args>(args)...);
     }
 
   private:
-    std::function<R(Args...)> task_;
-    async_future<R> future_;
+    std::function<void(promise<R>&, Args...)> task_;
+    promise<R> promise_;
 };
 
 
@@ -709,30 +785,90 @@ namespace detail
 {
 
 
+template<class T>
+async_future<T> asynchronous_state<T>::to_async_future()
+{
+  return async_future<T>(this->shared_from_this());
+}
+
+
+template<class T, class OneWayExecutor, class F>
+async_future<
+  typename std::result_of<
+    typename std::decay<F>::type(async_future<T>)
+  >::type
+>
+  one_way_executor_then(async_future<T>& predecessor_future, const OneWayExecutor& exec, F&& func)
+{
+  assert(predecessor_future.valid());
+
+  using result_type = typename std::result_of<
+    typename std::decay<F>::type(async_future<T>)
+  >::type;
+
+  packaged_task<result_type(async_future<T>&&)> task(std::forward<F>(func));
+  async_future<result_type> result_future = task.get_async_future();
+  assert(result_future.valid());
+
+  // the predecessor_future's continuation will call execution::execute()
+  auto continuation = [=, task = std::move(task)](async_future<T> predecessor_future) mutable
+  {
+    // wrap up task and the predecessor_future into a lambda that we give to execution::execute()
+
+    execution::execute(exec, [task = std::move(task), predecessor_future = std::move(predecessor_future)]() mutable
+    {
+      task(std::move(predecessor_future));
+    });
+  };
+
+  if(predecessor_future.is_ready())
+  {
+    // the predecessor future is ready, so we can execute the continuation immediately
+    continuation(std::move(predecessor_future));
+  }
+  else
+  {
+    // the predecessor future is not yet ready, so we need to save the continuation for later
+    // note that this is the only part of the implementation that requires modifying the predecessor_future's
+    // internal representation
+    predecessor_future.set_continuation(std::move(continuation));
+  }
+
+  assert(!predecessor_future.valid());
+
+  return result_future;
+}
+
+
 template<class T, class OneWayExecutor, class F,
          __FUTURE_REQUIRES(
            (execution::has_execute_member<OneWayExecutor>::value or execution::has_execute_free_function<OneWayExecutor>::value) and
            (!execution::has_then_execute_member<OneWayExecutor>::value and !execution::has_then_execute_free_function<OneWayExecutor>::value)
          )
         >
-execution::executor_future_t<
+execution::detail::executor_future_or_t<
   OneWayExecutor,
   typename std::result_of<
     typename std::decay<F>::type(async_future<T>)
-  >
+  >::type,
+  async_future
 >
-then_impl(async_future<F>& predecessor_future, const OneWayExecutor& exec, F&& func)
+then_impl(async_future<T>& predecessor_future, const OneWayExecutor& exec, F&& func)
 {
+  return one_way_executor_then(predecessor_future, exec, std::forward<F>(func));
 }
 
 
 template<class T>
 template<class Executor, class F>
-execution::executor_future_t<
+execution::detail::executor_future_or_t<
   Executor,
   typename std::result_of<
     typename std::decay<F>::type(async_future<T>)
-  >
+  >::type,
+  // XXX WAR issue with clang
+  //async_future
+  async_future<T>::template async_future_clang_workaround
 >
 async_future<T>::then(const Executor& exec, F&& func)
 {
