@@ -118,11 +118,25 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
       return result;
     }
 
-    void set_continuation(hacky_unique_function<void(async_future<T>&&)>&& continuation)
+    template<class Function>
+    void set_continuation(Function&& continuation)
     {
-      std::lock_guard<std::mutex> guard(mutex_);
+      std::unique_lock<std::mutex> lock(mutex_);
 
-      continuation_ = std::move(continuation);
+      if(unsafe_is_ready())
+      {
+        // the state is ready, invoke the continuation immediately
+
+        // unlock here so that the async_future passed to the continuation below doesn't block in .get()
+        lock.unlock();
+
+        std::forward<Function>(continuation)(to_async_future());
+      }
+      else
+      {
+        // the state is not yet ready, store the continuation for later
+        continuation_ = hacky_unique_function<void(async_future<T>&&)>(std::forward<Function>(continuation));
+      }
     }
 
     async_future<T> to_async_future();
@@ -278,9 +292,7 @@ class async_future
         // XXX we should probably throw an exception here
       }
 
-      hacky_unique_function<void(async_future&&)> continuation = std::forward<Function>(func);
-
-      ptr_to_state_->set_continuation(std::move(continuation));
+      ptr_to_state_->set_continuation(std::forward<Function>(func));
 
       // invalidate ourself
       ptr_to_state_ = nullptr;
@@ -821,27 +833,7 @@ async_future<
     });
   };
 
-  // XXX we need to lock the mutex here, because predecessor_future could become ready inside the else branch
-  //
-  // XXX we should refactor this:
-  //     set_continuation() should either
-  //       1. invoke the continuation if the future is ready or
-  //       2. store the continuation if the future is not yet ready
-  //     set_continuation()'s result should be void
-  //     in either case, set_continuation() invalidates the future
-  if(predecessor_future.is_ready())
-  {
-    // the predecessor future is ready, so we can execute the continuation immediately
-    continuation(std::move(predecessor_future));
-  }
-  else
-  {
-    // the predecessor future is not yet ready, so we need to save the continuation for later
-    // note that this is the only part of the implementation that requires access to
-    // the predecessor_future's internal representation (via set_continuation())
-    predecessor_future.set_continuation(std::move(continuation));
-  }
-
+  predecessor_future.set_continuation(std::move(continuation));
   assert(!predecessor_future.valid());
 
   return result_future;
