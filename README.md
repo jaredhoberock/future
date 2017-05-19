@@ -63,6 +63,7 @@ The following is a sample implementation of `.then()` for one-way executors:
         decay_t<F>(experimental::future<T>)
       >;
     
+      // XXX packaged_task is a pessimization because we may not require storing the continuation inside of set_continuation()
       packaged_task<result_type(experimental::future<T>&&)> continuation(forward<F>(func));
       experimental::future<result_type> result_future = continuation.get_future();
 
