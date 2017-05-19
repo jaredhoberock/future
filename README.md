@@ -79,18 +79,18 @@ The following is a sample implementation of `.then()` for one-way executors:
     
       // XXX note that this next call (set_continuation()) is the only part of the implementation that relies on experimental::future's implementation
       // 
-      //     It may make sense to introduce .set_continuation() as a lower-level primitive required by all Futures (or all continuation-aware Futures) distinct from .then()
-      //     The idea is that future.set_continuation() attaches a continuation function to the future.
+      //  It may make sense to introduce .set_continuation() as a lower-level primitive required by all Futures (or all continuation-aware Futures) distinct from .then()
+      //  The idea is that future.set_continuation() attaches a continuation function to the future.
       //
-      //     There are two cases:
+      //  There are two cases:
       //
-      //       1. The future is ready, and the continuation is invoked immediately in the current thread.
-      //       2. The future is not yet ready, and the continuation is stored for later. The continuation will be invoked in the thread that makes the future ready (e.g. the thread which calls promise.set_value()).
+      //    1. The future is ready, and the continuation is invoked immediately in the current thread.
+      //    2. The future is not yet ready, and the continuation is stored for later. The continuation will be invoked in the thread that makes the future ready (e.g. the thread which calls promise.set_value()).
       //
-      //     .set_continuation() returns void and invalidates the future.
+      //  .set_continuation() returns void and invalidates the future.
       //
-      //    If we had .set_continuation() as a primitive to work with, we could do all of this stuff generically inside
-      //    of execution::then_execute() rather than forcing the future implementation to deal with it
+      // If we had .set_continuation() as a primitive to work with, we could do all of this stuff generically inside
+      // of execution::then_execute() rather than forcing the future implementation to deal with it
     
       this->set_continuation(move(continuation));
     
