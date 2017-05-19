@@ -821,6 +821,14 @@ async_future<
     });
   };
 
+  // XXX we need to lock the mutex here, because predecessor_future could become ready inside the else branch
+  //
+  // XXX we should refactor this:
+  //     set_continuation() should either
+  //       1. invoke the continuation if the future is ready or
+  //       2. store the continuation if the future is not yet ready
+  //     set_continuation()'s result should be void
+  //     in either case, set_continuation() invalidates the future
   if(predecessor_future.is_ready())
   {
     // the predecessor future is ready, so we can execute the continuation immediately
@@ -829,8 +837,8 @@ async_future<
   else
   {
     // the predecessor future is not yet ready, so we need to save the continuation for later
-    // note that this is the only part of the implementation that requires modifying the predecessor_future's
-    // internal representation
+    // note that this is the only part of the implementation that requires access to
+    // the predecessor_future's internal representation (via set_continuation())
     predecessor_future.set_continuation(std::move(continuation));
   }
 
