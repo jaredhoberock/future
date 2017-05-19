@@ -63,41 +63,28 @@ The following is a sample implementation of `.then()` for one-way executors:
         decay_t<F>(experimental::future<T>)
       >;
     
-      packaged_task<result_type(experimental::future<T>&&)> task(forward<F>(func));
-      experimental::future<result_type> result_future = task.get_future();
-    
-      // the predecessor_future's continuation will call execution::execute()
-      auto continuation = [=, task = move(task)](experimental::future<T> predecessor_future) mutable
-      {
-        // wrap up task and the predecessor_future into a lambda that we give to execution::execute()
-    
-        execution::execute(exec, [task = move(task), predecessor_future = move(predecessor_future)]() mutable
-        {
-          task(move(predecessor_future));
-        });
-      };
-    
-      // XXX note that this next call (set_continuation()) is the only part of the implementation that relies on experimental::future's implementation
+      packaged_task<result_type(experimental::future<T>&&)> continuation(forward<F>(func));
+      experimental::future<result_type> result_future = continuation.get_future();
+
+      // XXX note that this next call (set_continuation()) is the only part of the implementation
+      //     that relies on experimental::future's implementation
       // 
-      //  It may make sense to introduce .set_continuation() as a lower-level primitive required by all Futures (or all continuation-aware Futures) distinct from .then()
+      //  It may make sense to introduce .set_continuation() as a lower-level primitive required by all
+      //  Futures (or all continuation-aware Futures) distinct from .then()
       //  The idea is that future.set_continuation() attaches a continuation function to the future.
       //
       //  There are two cases:
       //
-      //    1. The future is ready, and the continuation is invoked immediately in the current thread.
-      //    2. The future is not yet ready, and the continuation is stored for later. The continuation will be invoked in the thread that makes the future ready (e.g. the thread which calls promise.set_value()).
+      //    1. The future is ready, and execution::execute(exec, continuation) is invoked in the current thread
+      //    2. The future is not yet ready, and the continuation is stored for later.
+      //       execution::execute(exec, continuation) will be invoked in the thread that makes the future ready (e.g. the thread which calls promise.set_value()).
       //
-      //  .set_continuation() returns void and invalidates the future.
+      // .set_continuation() returns void and invalidates the future.
       //
       // If we had .set_continuation() as a primitive to work with, we could do all of this stuff generically inside
       // of execution::then_execute() rather than forcing the future implementation to deal with it
-      //
-      // Another idea is to make set_continuation() also receive an executor parameter. In this design, there would still be two cases:
-      //
-      //    1. The future is ready, and execution::execute(exec, continuation) is invoked in the current thread
-      //    2. The future is not yet ready, and the continuation is stored for later. execution::execute(exec, continuation) will be invoked in the thread that makes the future ready (e.g. the thread which calls promise.set_value()).
-    
-      this->set_continuation(move(continuation));
+
+      predecessor.set_continuation(exec, std::move(continuation));
     
       return result_future;
     }

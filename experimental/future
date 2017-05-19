@@ -118,9 +118,18 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
       return result;
     }
 
-    template<class Function>
-    void set_continuation(Function&& continuation)
+    template<class Executor, class Function>
+    void set_continuation(const Executor& exec, Function&& f)
     {
+      // create a continuation that calls execution::execute()
+      auto continuation = [exec, f = std::move(f)] (async_future<T>&& predecessor_future) mutable
+      {
+        execution::execute(exec, [f = std::move(f), predecessor_future = std::move(predecessor_future)] () mutable
+        {
+          f(std::move(predecessor_future));
+        });
+      };
+
       std::unique_lock<std::mutex> lock(mutex_);
 
       if(unsafe_is_ready())
@@ -130,12 +139,12 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
         // unlock here so that the async_future passed to the continuation below doesn't block in .get()
         lock.unlock();
 
-        std::forward<Function>(continuation)(to_async_future());
+        continuation(to_async_future());
       }
       else
       {
         // the state is not yet ready, store the continuation for later
-        continuation_ = hacky_unique_function<void(async_future<T>&&)>(std::forward<Function>(continuation));
+        continuation_ = hacky_unique_function<void(async_future<T>&&)>(std::move(continuation));
       }
     }
 
@@ -284,15 +293,15 @@ class async_future
       then(const Executor& exec, F&& func);
 
   private:
-    template<class Function>
-    void set_continuation(Function&& func)
+    template<class Executor, class Function>
+    void set_continuation(const Executor& exec, Function&& func)
     {
       if(!valid())
       {
         // XXX we should probably throw an exception here
       }
 
-      ptr_to_state_->set_continuation(std::forward<Function>(func));
+      ptr_to_state_->set_continuation(exec, std::forward<Function>(func));
 
       // invalidate ourself
       ptr_to_state_ = nullptr;
@@ -818,23 +827,11 @@ async_future<
     typename std::decay<F>::type(async_future<T>)
   >::type;
 
-  packaged_task<result_type(async_future<T>&&)> task(std::forward<F>(func));
-  async_future<result_type> result_future = task.get_async_future();
+  packaged_task<result_type(async_future<T>&&)> continuation(std::forward<F>(func));
+  async_future<result_type> result_future = continuation.get_async_future();
   assert(result_future.valid());
 
-  // the predecessor_future's continuation will call execution::execute()
-  auto continuation = [=, task = std::move(task)](async_future<T> predecessor_future) mutable
-  {
-    // wrap up task and the predecessor_future into a lambda that we give to execution::execute()
-
-    execution::execute(exec, [task = std::move(task), predecessor_future = std::move(predecessor_future)]() mutable
-    {
-      task(std::move(predecessor_future));
-    });
-  };
-
-  predecessor_future.set_continuation(std::move(continuation));
-  assert(!predecessor_future.valid());
+  predecessor_future.set_continuation(exec, std::move(continuation));
 
   return result_future;
 }
