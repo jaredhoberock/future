@@ -91,6 +91,11 @@ The following is a sample implementation of `.then()` for one-way executors:
       //
       // If we had .set_continuation() as a primitive to work with, we could do all of this stuff generically inside
       // of execution::then_execute() rather than forcing the future implementation to deal with it
+      //
+      // Another idea is to make set_continuation() also receive an executor parameter. In this design, there would still be two cases:
+      //
+      //    1. The future is ready, and the continuation is executed via execution::execute(exec, continuation)
+      //    2. The future is not yet ready, and the continuation is stored for later. execution::execute(exec, continuation) will be invoked in the thread that makes the future ready (e.g. the thread which calls promise.set_value()).
     
       this->set_continuation(move(continuation));
     
