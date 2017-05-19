@@ -27,6 +27,8 @@ This assumes that the future type has a mechanism for creating and containing a 
 
 Cases 1.1 and 1.2 ensure that the predecessor future is always presented to the executor, in the cases where the executor is able to consume it.
 
+XXX It may not actually be necessary to distinguish between cases 1.1 and 1.2. There's no rule that says `.then()` must return the same kind of future as the predecessor future.
+
 ### The executor is natively one-way.
 
 Natively one-way executors are oblivious to futures, because they have either `execute` or `bulk_execute` functions, and these functions neither consume nor produce futures.
