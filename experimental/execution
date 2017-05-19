@@ -11,6 +11,17 @@ namespace std
 {
 namespace experimental
 {
+inline namespace v1
+{
+
+// declare future for executor_future below
+template<class T>
+class future;
+
+
+} // end v1
+
+
 namespace execution
 {
 inline namespace v1
@@ -122,14 +133,18 @@ template<class Executor>
 using executor_context_t = typename executor_context<Executor>::type;
 
 
-template<class Executor, class T>
-struct executor_future
+namespace detail
+{
+
+
+template<class Executor, class T, template<class> class DefaultFuture>
+struct executor_future_or
 {
   // XXX this implementation doesn't seem right because it will work for types which aren't Executors
 
   using type = detail::detected_or_t<
     detail::detected_or_t<
-      std::future<T>,                       // otherwise, std::future<T>
+      DefaultFuture<T>,                     // otherwise, use the default future template
       detail::then_execute_free_function_t, // otherwise, check the result of then_execute(exec, ...)
       Executor,
       T
@@ -138,6 +153,21 @@ struct executor_future
     Executor,
     T
   >;
+};
+
+
+template<class Executor, class T, template<class> class DefaultFuture>
+using executor_future_or_t = typename executor_future_or<Executor, T, DefaultFuture>::type;
+
+
+} // end detail
+
+
+template<class Executor, class T>
+struct executor_future
+{
+  // when the executor doesn't have a native future type, default to std::experimental::future
+  using type = detail::executor_future_or_t<Executor, T, std::experimental::future>;
 };
 
 template<class Executor, class T>
