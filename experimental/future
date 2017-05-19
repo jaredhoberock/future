@@ -827,6 +827,7 @@ async_future<
     typename std::decay<F>::type(async_future<T>)
   >::type;
 
+  // XXX packaged_task is a pessimization because set_continuation() may not need to store the continuation
   packaged_task<result_type(async_future<T>&&)> continuation(std::forward<F>(func));
   async_future<result_type> result_future = continuation.get_async_future();
   assert(result_future.valid());
