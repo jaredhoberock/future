@@ -743,12 +743,6 @@ void fulfill_promise(F&& func, promise<T>& p, async_future<Predecessor>& predece
 //  p.set_value();
 //}
 
-template<class T>
-typename std::decay<T>::type decay_copy(T&& value)
-{
-  return std::forward<T>(value);
-}
-
 
 template<class T, class OneWayExecutor, class F>
 async_future<
@@ -767,7 +761,7 @@ async_future<
   // create a continuation which fulfills a promise, return that promise's future from this function
   promise<result_type> promise;
   async_future<result_type> result_future = promise.get_async_future();
-  auto continuation = [promise = std::move(promise), func = decay_copy(std::forward<F>(func))](async_future<T> predecessor_future) mutable
+  auto continuation = [promise = std::move(promise), func(std::forward<F>(func))](async_future<T> predecessor_future) mutable
   {
     detail::fulfill_promise(func, promise, predecessor_future);
   };
