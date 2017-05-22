@@ -122,7 +122,7 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
     void set_continuation(const Executor& exec, Function&& f)
     {
       // create a continuation that calls execution::execute()
-      auto continuation = [exec, f = std::move(f)] (async_future<T>&& predecessor_future) mutable
+      auto continuation = [exec, f = std::move(f)] (async_future<T> predecessor_future) mutable
       {
         execution::execute(exec, [f = std::move(f), predecessor_future = std::move(predecessor_future)] () mutable
         {
@@ -144,7 +144,7 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
       else
       {
         // the state is not yet ready, store the continuation for later
-        continuation_ = hacky_unique_function<void(async_future<T>&&)>(std::move(continuation));
+        continuation_ = std::move(continuation);
       }
     }
 
@@ -167,7 +167,7 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
     std::experimental::optional<variant_type> maybe_result_;
 
     // asynchronous_state may or may not have a continuation stored in it
-    hacky_unique_function<void(async_future<T>&&)> continuation_;
+    hacky_unique_function<void(async_future<T>)> continuation_;
 };
 
 
@@ -767,7 +767,7 @@ async_future<
   // create a continuation which fulfills a promise, return that promise's future from this function
   promise<result_type> promise;
   async_future<result_type> result_future = promise.get_async_future();
-  auto continuation = [promise = std::move(promise), func = decay_copy(std::forward<F>(func))](async_future<T>&& predecessor_future) mutable
+  auto continuation = [promise = std::move(promise), func = decay_copy(std::forward<F>(func))](async_future<T> predecessor_future) mutable
   {
     detail::fulfill_promise(func, promise, predecessor_future);
   };
