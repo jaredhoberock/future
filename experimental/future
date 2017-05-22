@@ -258,17 +258,18 @@ class async_future
 
     T get()
     {
+      // invalidate ourself upon exiting this function
+      auto invalidate_self = detail::make_scope_exit([this]
+      {
+        ptr_to_state_ = nullptr;
+      });
+
       if(!valid())
       {
         // XXX we are encouraged to throw an exception here
       }
 
-      T result = ptr_to_state_->get();
-
-      // invalidate ourself
-      ptr_to_state_ = nullptr;
-
-      return result;
+      return ptr_to_state_->get();
     }
 
     bool valid() const noexcept
