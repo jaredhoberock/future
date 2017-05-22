@@ -64,7 +64,7 @@ The following is a sample implementation of `.then()` for one-way executors:
       >;
     
       // XXX packaged_task is a pessimization because we may not require storing the continuation inside of set_continuation()
-      packaged_task<result_type(experimental::future<T>&&)> continuation(forward<F>(func));
+      packaged_task<result_type(experimental::future<T>)> continuation(forward<F>(func));
       experimental::future<result_type> result_future = continuation.get_future();
 
       // XXX note that this next call (set_continuation()) is the only part of the implementation
@@ -98,7 +98,7 @@ The following is a sample implementation of `.set_continuation()` for `experimen
     void set_continuation(const Executor& exec, Function&& f)
     {
       // create a continuation that calls execution::execute()
-      auto continuation = [exec, f = move(f)] (experimental::future<T>&& predecessor_future) mutable
+      auto continuation = [exec, f = move(f)] (experimental::future<T> predecessor_future) mutable
       {
         execution::execute(exec, [f = move(f), predecessor_future = move(predecessor_future)] () mutable
         {
@@ -120,7 +120,7 @@ The following is a sample implementation of `.set_continuation()` for `experimen
       else
       {
         // the state is not yet ready, store the continuation for later
-        this->continuation_ = unique_function<void(experimental::future<T>&&)>(move(continuation));
+        this->continuation_ = move(continuation);
       }
     }
 
