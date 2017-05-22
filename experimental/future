@@ -750,13 +750,12 @@ void fulfill_promise(F&& func, promise<T>& p, async_future<Predecessor>& predece
   p.set_value(std::forward<F>(func)(std::move(predecessor_future)));
 }
 
-// XXX enable this when promise<void> is implemented
-//template<class F, class Predecessor>
-//void fulfill_promise(F&& func, promise<void>& p, async_future<Predecessor>& predecessor_future)
-//{
-//  std::forward<F>(func)(std::move(predecessor_future));
-//  p.set_value();
-//}
+template<class F, class Predecessor>
+void fulfill_promise(F&& func, promise<void>& p, async_future<Predecessor>& predecessor_future)
+{
+  std::forward<F>(func)(std::move(predecessor_future));
+  p.set_value();
+}
 
 
 template<class T, class OneWayExecutor, class F>

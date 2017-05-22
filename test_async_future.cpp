@@ -48,7 +48,7 @@ int main()
   }
 
   {
-    // then()
+    // non-void -> non-void then()
 
     async_future<int> f0 = async_future<int>::make_ready(13);
     assert(f0.valid());
@@ -61,6 +61,25 @@ int main()
     });
 
     int result = f1.get();
+
+    assert(result == 20);
+  }
+
+  {
+    // non-void -> void then()
+    
+    async_future<int> f0 = async_future<int>::make_ready(13);
+    assert(f0.valid());
+    assert(f0.is_ready());
+
+    has_execute_member exec;
+    int result = 0;
+    auto f1 = f0.then(exec, [&](async_future<int> predecessor)
+    {
+      result = predecessor.get() + 7;
+    });
+
+    f1.wait();
 
     assert(result == 20);
   }
