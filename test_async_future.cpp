@@ -30,13 +30,21 @@ int main()
   using namespace std::experimental::v1::detail;
 
   {
-    // make_ready()
+    // non-void make_ready()
 
     async_future<int> f0 = async_future<int>::make_ready(13);
     assert(f0.valid());
     assert(f0.is_ready());
 
     assert(13 == f0.get());
+  }
+
+  {
+    // void make_ready()
+
+    async_future<void> f0 = async_future<void>::make_ready();
+    assert(f0.valid());
+    assert(f0.is_ready());
   }
 
   {

@@ -239,15 +239,19 @@ class async_future
       return *this;
     }
 
-    template<class Deduced = T,
-             __FUTURE_REQUIRES(
-               !std::is_void<Deduced>::value
-             )
-            >
+    template<class Deduced = T, __FUTURE_REQUIRES(!std::is_void<Deduced>::value)>
     static async_future make_ready(const Deduced& value)
     {
       async_future result(std::make_shared<detail::asynchronous_state<T>>());
       result.ptr_to_state_->set_value(value);
+      return result;
+    }
+
+    template<class Deduced = T, __FUTURE_REQUIRES(std::is_void<Deduced>::value)>
+    static async_future make_ready()
+    {
+      async_future result(std::make_shared<detail::asynchronous_state<T>>());
+      result.ptr_to_state_->set_value();
       return result;
     }
 
