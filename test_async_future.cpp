@@ -84,6 +84,44 @@ int main()
     assert(result == 20);
   }
 
+  {
+    // void -> non-void then()
+
+    async_future<void> f0 = async_future<void>::make_ready();
+    assert(f0.valid());
+    assert(f0.is_ready());
+
+    has_execute_member exec;
+    auto f1 = f0.then(exec, [](async_future<void> predecessor)
+    {
+      predecessor.wait();
+      return 20;
+    });
+
+    int result = f1.get();
+    assert(result == 20);
+  }
+
+  {
+    // void -> void then()
+
+    async_future<void> f0 = async_future<void>::make_ready();
+    assert(f0.valid());
+    assert(f0.is_ready());
+
+    has_execute_member exec;
+    int result = 0;
+    auto f1 = f0.then(exec, [&](async_future<void> predecessor)
+    {
+      predecessor.wait();
+      result = 20;
+    });
+
+    f1.wait();
+
+    assert(result == 20);
+  }
+
   std::cout << "OK" << std::endl;
 }
 
