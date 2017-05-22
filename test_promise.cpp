@@ -2,20 +2,19 @@
 #include <cassert>
 #include <iostream>
 
-template<class T>
 void test()
 {
   {
     // test get_future
-    std::experimental::promise<T> p;
+    std::experimental::promise<int> p;
 
-    std::experimental::future<T> f = p.get_future();
+    std::experimental::future<int> f = p.get_future();
 
     assert(f.valid());
 
     try
     {
-      std::experimental::future<T> f = p.get_future();
+      std::experimental::future<int> f = p.get_future();
       assert(0);
     }
     catch(std::future_error e)
@@ -30,19 +29,19 @@ void test()
 
   {
     // test set_value() / .get()
-    std::experimental::promise<T> p;
+    std::experimental::promise<int> p;
 
-    T expected_result = 13;
+    int expected_result = 13;
     p.set_value(expected_result);
 
-    T result = p.get_future().get();
+    int result = p.get_future().get();
 
     assert(expected_result == result);
   }
 
   {
     // test superfluous set_value()
-    std::experimental::promise<T> p;
+    std::experimental::promise<int> p;
 
     p.set_value(13);
 
@@ -65,7 +64,7 @@ void test()
 
 int main()
 {
-  test<int>();
+  test();
 
   std::cout << "OK" << std::endl;
 }
