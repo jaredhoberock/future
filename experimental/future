@@ -14,6 +14,8 @@
 #include <future> // for std::future_error
 #include <experimental/execution>
 #include <experimental/detail/hacky_unique_function.hpp>
+#include <experimental/detail/expected.hpp>
+#include <experimental/detail/scope_exit.hpp>
 
 
 namespace std
@@ -54,29 +56,41 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
       return unsafe_is_ready();
     }
 
-    void set_value(const T& value)
+  private:
+    template<class... Arg, __FUTURE_REQUIRES(sizeof...(Arg) == int(!std::is_void<T>::value))>
+    void set_value_impl(Arg&&... arg)
     {
       std::lock_guard<std::mutex> guard(mutex_);
 
-      maybe_result_ = variant_type(value);
+      maybe_result_ = expected<T>(std::forward<Arg>(arg)...);
 
       unsafe_invoke_continuation_if();
     }
 
-    void set_value(T&& value)
+  public:
+    template<class Deduced = T, __FUTURE_REQUIRES(!std::is_void<Deduced>::value)>
+    void set_value(const Deduced& value)
     {
-      std::lock_guard<std::mutex> guard(mutex_);
+      set_value_impl(value);
+    }
 
-      maybe_result_ = variant_type(std::move(value));
+    template<class Deduced = T, __FUTURE_REQUIRES(!std::is_void<typename std::decay<Deduced>::type>::value)>
+    void set_value(Deduced&& value)
+    {
+      set_value_impl(std::move(value));
+    }
 
-      unsafe_invoke_continuation_if();
+    template<class Deduced = T, __FUTURE_REQUIRES(std::is_void<Deduced>::value)>
+    void set_value()
+    {
+      set_value_impl();
     }
 
     void set_exception(std::exception_ptr e)
     {
       std::lock_guard<std::mutex> guard(mutex_);
 
-      maybe_result_ = variant_type(e);
+      maybe_result_ = expected<T>(e);
 
       unsafe_invoke_continuation_if();
     }
@@ -88,34 +102,18 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
       cv.wait(lock, [this]{ return unsafe_is_ready(); });
     }
 
-  private:
-    struct get_visitor
-    {
-      T operator()(T& value) const
-      {
-        return std::move(value);
-      }
-
-      T operator()(std::exception_ptr e) const
-      {
-        std::rethrow_exception(e);
-      }
-    };
-
-  public:
     T get()
     {
+      // invalidate ourself at scope exit
+      auto invalidate_self = detail::make_scope_exit([this]
+      {
+        maybe_result_ = nullopt;
+      });
+
       // wait for readiness
       wait();
 
-      // get the result or throw any exception
-      T result = std::experimental::visit(get_visitor(), *maybe_result_);
-
-      // invalidate ourself
-      maybe_result_ = nullopt;
-
-      // return the result
-      return result;
+      return maybe_result_->value_or_throw();
     }
 
     template<class Executor, class Function>
@@ -163,8 +161,7 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
     // this mutex is mutable because .wait() is supposed to be const
     mutable std::mutex mutex_;
 
-    using variant_type = std::experimental::variant<T, std::exception_ptr>;
-    std::experimental::optional<variant_type> maybe_result_;
+    std::experimental::optional<expected<T>> maybe_result_;
 
     // asynchronous_state may or may not have a continuation stored in it
     hacky_unique_function<void(async_future<T>)> continuation_;
@@ -242,7 +239,12 @@ class async_future
       return *this;
     }
 
-    static async_future make_ready(const T& value)
+    template<class Deduced = T,
+             __FUTURE_REQUIRES(
+               !std::is_void<Deduced>::value
+             )
+            >
+    static async_future make_ready(const Deduced& value)
     {
       async_future result(std::make_shared<detail::asynchronous_state<T>>());
       result.ptr_to_state_->set_value(value);
@@ -342,18 +344,28 @@ class made_ready_future
 {
   public:
     // this constructor corresponds to an overload of promise::set_value()
-    made_ready_future(const T& value) noexcept
-      : maybe_result_(variant_type(value))
+    template<class Deduced = T,
+             __FUTURE_REQUIRES(
+               !std::is_void<Deduced>::value
+             )
+            >
+    made_ready_future(const Deduced& value) noexcept
+      : maybe_result_(value)
     {}
 
     // this constructor corresponds to an overload of promise::set_value()
-    made_ready_future(T&& value) noexcept
-      : maybe_result_(variant_type(std::move(value)))
+    template<class Deduced = T,
+             __FUTURE_REQUIRES(
+               !std::is_void<Deduced>::value
+             )
+            >
+    made_ready_future(Deduced&& value) noexcept
+      : maybe_result_(expected<T>(std::move(value)))
     {}
 
     // this constructor corresponds to promise::set_exception
     made_ready_future(std::exception_ptr e) noexcept
-      : maybe_result_(variant_type(e))
+      : maybe_result_(expected<T>(e))
     {}
 
     made_ready_future(made_ready_future&& other) noexcept
@@ -385,31 +397,15 @@ class made_ready_future
       return true;
     }
 
-  private:
-    struct get_visitor
-    {
-      T operator()(T& value) const
-      {
-        return std::move(value);
-      }
-
-      T operator()(std::exception_ptr e) const
-      {
-        std::rethrow_exception(e);
-      }
-    };
-
-  public:
     T get()
     {
-      // get the result or throw any exception
-      T result = std::experimental::visit(get_visitor(), *maybe_result_);
+      // invalidate ourself at scope exit
+      auto invalidate_self = detail::make_scope_exit([this]
+      {
+        maybe_result_ = nullopt;
+      });
 
-      // invalidate ourself
-      maybe_result_ = nullopt;
-
-      // return the result
-      return result;
+      return maybe_result_->value_or_throw();
     }
 
     bool valid() const noexcept
@@ -418,9 +414,7 @@ class made_ready_future
     }
 
   private:
-    using variant_type = std::experimental::variant<T, std::exception_ptr>;
-
-    std::experimental::optional<variant_type> maybe_result_;
+    std::experimental::optional<expected<T>> maybe_result_;
 };
 
 
@@ -525,7 +519,8 @@ class future
 
     friend future<T> make_exceptional_future<T>(std::exception_ptr e);
 
-    friend future<typename std::decay<T>::type> make_ready_future<T>(T&& value);
+    template<class U>
+    friend future<typename std::decay<U>::type> make_ready_future(U&& value);
 
     future(detail::made_ready_future<T>&& value)
       : variant_(std::move(value))
@@ -605,7 +600,12 @@ class promise
       return get_async_future();
     }
 
-    void set_value(const T& value)
+  private:
+    template<class... Arg,
+             __FUTURE_REQUIRES(
+               sizeof...(Arg) == int(!std::is_void<T>::value)
+             )>
+    void set_value_impl(Arg&&... arg)
     {
       if(!valid())
       {
@@ -617,7 +617,7 @@ class promise
         throw std::future_error(std::future_errc::promise_already_satisfied);
       }
 
-      ptr_to_state_->set_value(value);
+      ptr_to_state_->set_value(std::forward<Arg>(arg)...);
 
       // if the future is retrived, then we can release the state
       if(future_retrieved())
@@ -626,25 +626,35 @@ class promise
       }
     }
 
-    void set_value(T&& value)
+  public:
+    template<class Deduced = T,
+             __FUTURE_REQUIRES(
+               !std::is_void<Deduced>::value
+             )
+            >
+    void set_value(const Deduced& value)
     {
-      if(!valid())
-      {
-        throw std::future_error(std::future_errc::no_state);
-      }
+      set_value_impl(value);
+    }
 
-      if(ptr_to_state_->is_ready())
-      {
-        throw std::future_error(std::future_errc::promise_already_satisfied);
-      }
+    template<class Deduced = T,
+             __FUTURE_REQUIRES(
+               !std::is_void<Deduced>::value
+             )
+            >
+    void set_value(Deduced&& value)
+    {
+      set_value_impl(std::move(value));
+    }
 
-      ptr_to_state_->set_value(std::move(value));
-
-      // if the future is retrived, then we can release the state
-      if(future_retrieved())
-      {
-        release();
-      }
+    template<class Deduced = T,
+             __FUTURE_REQUIRES(
+               std::is_void<Deduced>::value
+             )
+            >
+    void set_value()
+    {
+      set_value_impl();
     }
 
     void set_exception(std::exception_ptr p)
