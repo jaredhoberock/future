@@ -79,7 +79,7 @@ void test()
 
     try
     {
-      // calling set_value() againt should throw promise_already_satisfied
+      // calling set_value() again should throw promise_already_satisfied
       p.set_value(13);
       assert(0);
     }
@@ -101,7 +101,7 @@ void test()
 
     try
     {
-      // calling set_value() againt should throw promise_already_satisfied
+      // calling set_value() again should throw promise_already_satisfied
       p.set_value();
       assert(0);
     }
