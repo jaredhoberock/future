@@ -348,22 +348,20 @@ template<class T>
 class made_ready_future
 {
   public:
-    // this constructor corresponds to an overload of promise::set_value()
-    template<class Deduced = T,
-             __FUTURE_REQUIRES(
-               !std::is_void<Deduced>::value
-             )
-            >
-    made_ready_future(const Deduced& value) noexcept
-      : maybe_result_(value)
+    // this constructor corresponds to the void overload of promise::set_value()
+    template<class Deduced = T, __FUTURE_REQUIRES(std::is_void<Deduced>::value)>
+    made_ready_future() noexcept
+      : maybe_result_(expected<void>())
     {}
 
-    // this constructor corresponds to an overload of promise::set_value()
-    template<class Deduced = T,
-             __FUTURE_REQUIRES(
-               !std::is_void<Deduced>::value
-             )
-            >
+    // this constructor corresponds to copying overload of promise::set_value()
+    template<class Deduced = T, __FUTURE_REQUIRES(!std::is_void<Deduced>::value)>
+    made_ready_future(const Deduced& value) noexcept
+      : maybe_result_(expected<T>(value))
+    {}
+
+    // this constructor corresponds to the moving overload of promise::set_value()
+    template<class Deduced = T, __FUTURE_REQUIRES(!std::is_void<Deduced>::value)>
     made_ready_future(Deduced&& value) noexcept
       : maybe_result_(expected<T>(std::move(value)))
     {}
@@ -436,6 +434,8 @@ future<T> make_exceptional_future(std::exception_ptr e);
 
 template<class T>
 future<typename std::decay<T>::type> make_ready_future(T&& value);
+
+future<void> make_ready_future();
 
 template<class T>
 class promise;
@@ -526,6 +526,8 @@ class future
 
     template<class U>
     friend future<typename std::decay<U>::type> make_ready_future(U&& value);
+
+    friend future<void> make_ready_future();
 
     future(detail::made_ready_future<T>&& value)
       : variant_(std::move(value))
@@ -716,6 +718,12 @@ template<class T>
 future<typename std::decay<T>::type> make_ready_future(T&& value)
 {
   return detail::made_ready_future<typename std::decay<T>::type>(std::forward<T>(value));
+}
+
+
+inline future<void> make_ready_future()
+{
+  return detail::made_ready_future<void>();
 }
 
 
