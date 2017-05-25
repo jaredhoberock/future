@@ -68,7 +68,7 @@ The idea is that `future.set_continuation()` attaches a continuation function to
 There are two cases:
 
   1. The future is ready at the point when `.set_continuation()` is invoked. Therefore, `execution::execute(exec, continuation)` is immediately invoked in the calling thread.
-  2. The future is not yet ready at the point when `.set_continuation()` is invoked. Therefore, he continuation is stored for later. `execution::execute(exec, continuation)` will be invoked
+  2. The future is not yet ready at the point when `.set_continuation()` is invoked. Therefore, the continuation is stored for later. `execution::execute(exec, continuation)` will be invoked
      in the thread that makes the future ready (e.g. the thread which calls `promise.set_value()`.
 
 `future.set_continuation()` returns `void` and invalidates the future.
