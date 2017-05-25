@@ -46,8 +46,6 @@ The following is a sample implementation of `.then()` for one-way executors:
     >
       then(const OneWayExecutor& exec, F&& func)
     {
-      assert(this->valid());
-    
       using result_type = result_of_t<
         decay_t<F>(experimental::future<T>)
       >;
@@ -56,35 +54,29 @@ The following is a sample implementation of `.then()` for one-way executors:
       packaged_task<result_type(experimental::future<T>)> continuation(forward<F>(func));
       experimental::future<result_type> result_future = continuation.get_future();
 
-      // note that this next call (set_continuation()) is the only part of the implementation
-      // that relies on experimental::future's implementation
-      // 
-      // It may make sense to introduce .set_continuation() as a lower-level primitive required by all
-      // Futures (or all continuation-aware Futures) distinct from .then()
-      // The idea is that future.set_continuation() attaches a continuation function to the future, and this continuation
-      // is invoked when the future becomes ready.
-      //
-      // There are two cases:
-      //
-      //   1. The future is ready, and execution::execute(exec, continuation) is invoked
-      //      immediately in the current thread
-      //   2. The future is not yet ready, and the continuation is stored for later.
-      //      execution::execute(exec, continuation) will be invoked in the thread that
-      //      makes the future ready (e.g. the thread which calls promise.set_value()).
-      //
-      // .set_continuation() returns void and invalidates the future.
-      //
-      // If we had .set_continuation() as a primitive to work with, we could do all of this stuff generically inside
-      // of execution::then_execute(). In that scenario, predecessor.then(exec, f) would unconditionally call
-      // execution::then_execute(exec, f, predecessor), and it would be execution::then_execute()'s responsibility
-      // to implement all the logic here
-
-      predecessor.set_continuation(exec, std::move(continuation));
+      // set the predecessor's continuation and executor which will execute that continuation
+      predecessor.__set_continuation(exec, std::move(continuation));
     
       return result_future;
     }
 
-The following is a sample implementation of `.set_continuation()` for `experimental::future<T>`'s asynchronous state object:
+Note that the call to `.__set_continuation()` in the above is the only part of the implementation of `.then()` that relies on `experimental::future`'s internal representation.
+It may make sense to introduce `.set_continuation()` as a lower-level operation required by all `Future`s (or all continuation-aware `Future`s) separate from `.then()`.
+The idea is that `future.set_continuation()` attaches a continuation function to the future, and this continuation function is invoked when the future becomes ready.
+
+There are two cases:
+
+  1. The future is ready at the point when `.set_continuation()` is invoked. Therefore, `execution::execute(exec, continuation)` is immediately invoked in the calling thread.
+  2. The future is not yet ready at the point when `.set_continuation()` is invoked. Therefore, he continuation is stored for later. `execution::execute(exec, continuation)` will be invoked
+     in the thread that makes the future ready (e.g. the thread which calls `promise.set_value()`.
+
+`future.set_continuation()` returns `void` and invalidates the future.
+
+If we had `.set_continuation()` as a primitive to work with, it would be possible to make `future.then(exec, f)` purely a sugared form of `execution::then_execute(exec, f, future)`.
+In that scenario, `future.then(exec, f)` would unconditionally call `execution::then_execute(exec, f, predecessor)`, and it would be the responsibility of `execution::then_execute()`
+to implement the logic for Cases 1. and 2. above.
+
+#### Sample implementation of a hypothetical `.set_continuation()` function for `experimental::future<T>`'s asynchronous state object
 
     template<class Executor, class Function>
     void set_continuation(const Executor& exec, Function&& f)
