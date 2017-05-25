@@ -30,7 +30,7 @@ At first glance, it may seem like we could call `execution::execute()` with a fu
 
 The problem with this scheme is that 2. completely consumes an agent by waiting for the predecessor to become ready. This would be an expensive implemention in situations where agents are scarce, such as when the executor is backed by a small thread pool.
 
-Instead, in Case 2., `future.then()` should create a continuation (capturing the executor) and this continuation should call `execution::execute()`. If the future is not ready at the time `.then()` is called, then `promise.set_value()` would call this continuation.
+Instead, in Case 2., `future.then()` should create a continuation (capturing the executor) and this continuation should call `execution::execute()`. If the future is not ready at the point when `.then()` is called, then `promise.set_value()` would call this continuation.
 
 This assumes that the future type has a mechanism for creating and containing a continuation.
 
