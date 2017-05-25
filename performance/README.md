@@ -19,7 +19,7 @@ The problem with this implementation is that the cost of introducing a
 
     real    0m1.862s
     user    0m1.252s
-    sys	    0m0.608s
+    sys     0m0.608s
 
 Because a separate thread is not required to fulfill the `promise`, an
 efficient implementation of `make_ready_future` need not introduce a `promise`
