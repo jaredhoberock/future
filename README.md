@@ -75,7 +75,9 @@ The following is a sample implementation of `.then()` for one-way executors:
       // .set_continuation() returns void and invalidates the future.
       //
       // If we had .set_continuation() as a primitive to work with, we could do all of this stuff generically inside
-      // of execution::then_execute() rather than requiring the future implementation to deal with it
+      // of execution::then_execute(). In that scenario, predecessor.then(exec, f) would unconditionally call
+      // execution::then_execute(exec, f, predecessor), and it would be execution::then_execute()'s responsibility
+      // to implement all the logic here
 
       predecessor.set_continuation(exec, std::move(continuation));
     
