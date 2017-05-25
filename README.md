@@ -10,7 +10,7 @@ There are two cases:
 
 ### The executor is natively two-way.
   
-Natively two-way executors interoperate with futures, because their execution functions consume and produce futures.
+Natively two-way executors interoperate with futures because their execution functions consume and produce futures. These execution functions provide a path for communicating dependency relationships through futures to the executor's underlying context. The purpose of relaying these relationships through the executor is to exploit them for increased efficiency.
 
 In Case 1., `predecessor_future.then(exec, f)` should call `execution::then_execute(exec, f, predecessor)`. The type of future returned by this function is given by `execution::executor_future_t`.
 
@@ -20,7 +20,7 @@ Case 1. ensures that the predecessor future is always presented to the executor 
 
 ### The executor is natively one-way.
 
-Natively one-way executors are oblivious to futures, because their execution functions neither consume nor produce futures.
+Natively one-way executors are oblivious to futures because their execution functions neither consume nor produce futures.
 
 At first glance, it may seem like we could call `execution::execute()` with a function which:
 
