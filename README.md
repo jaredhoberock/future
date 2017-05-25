@@ -10,24 +10,13 @@ There are two cases:
 
 ### The executor is natively two-way.
   
-Natively two-way executors have either `then_execute` or `bulk_then_execute` functions.
+Natively two-way executors interoperate with futures, because they have either `then_execute` or `bulk_then_execute` functions, and these functions consume and produce futures.
 
-There are two sub-cases:
+`predecessor_future.then(exec, f)` should call `execution::then_execute(exec, f, predecessor)`. The type of future returned by this call is given by `execution::executor_future_t`.
 
-  1. The executor returns a kind of future which can be converted into the same type of future as the predecessor future.
-  2. The executor returns a kind of future which cannot be converted into the same type of future as the predecessor future.
+This assumes `then_execute()` knows what to do and will not simply turn around and call `predecessor.then()`, which would create a cycle. Presumably, either the executor or context has access to the predecessor future's internal representation, and it uses this access to create a continuation appropriately.
 
-1.1 When the kind of future returned by `then_execute` can be converted into the same kind as the `predecessor` future, `predecessor.then(exec, f)` should just call `execution::then_execute(exec, f, predecessor)`.
-
-This assumes `then_execute()` knows what to do and will not simply turn around and call `predecessor.then()`, which would create a cycle.
-
-1.2 When the kind of future returned by `then_execute` cannot be converted into the same kind as the `predecessor` future, we should again call `execution::then_execute` and also introduce a continuation that returns `future_from_executor.get()`.
-
-This assumes that the future type has a mechanism for creating and containing a continuation.
-
-Cases 1.1 and 1.2 ensure that the predecessor future is always presented to the executor, in the cases where the executor is able to consume it.
-
-XXX It may not actually be necessary to distinguish between cases 1.1 and 1.2. There's no rule that says `.then()` must return the same kind of future as the predecessor future.
+Case 1. ensures that the predecessor future is always presented to the executor in the cases where the executor is able to consume it.
 
 ### The executor is natively one-way.
 
@@ -67,25 +56,26 @@ The following is a sample implementation of `.then()` for one-way executors:
       packaged_task<result_type(experimental::future<T>)> continuation(forward<F>(func));
       experimental::future<result_type> result_future = continuation.get_future();
 
-      // XXX note that this next call (set_continuation()) is the only part of the implementation
-      //     that relies on experimental::future's implementation
+      // note that this next call (set_continuation()) is the only part of the implementation
+      // that relies on experimental::future's implementation
       // 
-      //  It may make sense to introduce .set_continuation() as a lower-level primitive required by all
-      //  Futures (or all continuation-aware Futures) distinct from .then()
-      //  The idea is that future.set_continuation() attaches a continuation function to the future.
+      // It may make sense to introduce .set_continuation() as a lower-level primitive required by all
+      // Futures (or all continuation-aware Futures) distinct from .then()
+      // The idea is that future.set_continuation() attaches a continuation function to the future, and this continuation
+      // is invoked when the future becomes ready.
       //
-      //  There are two cases:
+      // There are two cases:
       //
-      //    1. The future is ready, and execution::execute(exec, continuation) is invoked
-      //       in the current thread
-      //    2. The future is not yet ready, and the continuation is stored for later.
-      //       execution::execute(exec, continuation) will be invoked in the thread that
-      //       makes the future ready (e.g. the thread which calls promise.set_value()).
+      //   1. The future is ready, and execution::execute(exec, continuation) is invoked
+      //      immediately in the current thread
+      //   2. The future is not yet ready, and the continuation is stored for later.
+      //      execution::execute(exec, continuation) will be invoked in the thread that
+      //      makes the future ready (e.g. the thread which calls promise.set_value()).
       //
       // .set_continuation() returns void and invalidates the future.
       //
       // If we had .set_continuation() as a primitive to work with, we could do all of this stuff generically inside
-      // of execution::then_execute() rather than forcing the future implementation to deal with it
+      // of execution::then_execute() rather than requiring the future implementation to deal with it
 
       predecessor.set_continuation(exec, std::move(continuation));
     
