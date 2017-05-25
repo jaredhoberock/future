@@ -12,7 +12,7 @@ There are two cases:
   
 Natively two-way executors interoperate with futures, because they have either `then_execute` or `bulk_then_execute` functions, and these functions consume and produce futures.
 
-`predecessor_future.then(exec, f)` should call `execution::then_execute(exec, f, predecessor)`. The type of future returned by this call is given by `execution::executor_future_t`.
+In Case 1., `predecessor_future.then(exec, f)` should call `execution::then_execute(exec, f, predecessor)`. The type of future returned by this function is given by `execution::executor_future_t`.
 
 This assumes `then_execute()` knows what to do and will not simply turn around and call `predecessor.then()`, which would create a cycle. Presumably, either the executor or context has access to the predecessor future's internal representation, and it uses this access to create a continuation appropriately.
 
