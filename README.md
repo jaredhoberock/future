@@ -16,7 +16,7 @@ In Case 1., `predecessor_future.then(exec, f)` should call `execution::then_exec
 
 This assumes `then_execute()` knows what to do and will not simply turn around and call `predecessor.then()`, which would create a cycle. Presumably, either the executor or underlying execution context has access to the predecessor future's internal representation, and it uses this access to create a continuation appropriately.
 
-Case 1. ensures that the predecessor future is always presented to the executor in the cases where the executor is able to consume it.
+Case 1. ensures that the predecessor future is always presented to the executor in the cases where the executor is able to natively consume it.
 
 ### The executor is natively one-way.
 
