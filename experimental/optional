@@ -103,7 +103,7 @@ struct optional_base
   typedef typename std::aligned_storage<
     sizeof(T)
   >::type storage_type;
-  
+
   storage_type storage_;
 };
 
@@ -545,7 +545,9 @@ void swap(experimental::optional<T>& a, experimental::optional<T>& b)
 template<class T>
 struct hash<experimental::optional<T>>
 {
+  #if defined(__NVCC__) && !(defined(__clang__) && defined(__CUDA__))
   #pragma nv_exec_check_disable
+  #endif
   __host__ __device__
   size_t operator()(const experimental::optional<T>& key) const
   {
@@ -564,4 +566,3 @@ struct hash<experimental::optional<T>>
 #  undef __device__
 #  undef OPTIONAL_UNDEF_DEVICE
 #endif
-
