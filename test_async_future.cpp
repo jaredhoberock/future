@@ -67,7 +67,7 @@ int main()
 
   {
     // non-void -> void then()
-    
+
     async_future<int> f0 = async_future<int>::make_ready(13);
     assert(f0.valid());
     assert(f0.is_ready());
@@ -121,7 +121,26 @@ int main()
 
     assert(result == 20);
   }
+  {
+    // async_future from promise
 
+    std::experimental::promise<bool> p;
+    async_future<bool> f = p.get_async_future();
+    bool continuation_has_run = false;
+
+    has_execute_member exec;
+    f.then(exec,
+        [&continuation_has_run]( async_future<bool> predecessor)
+        {
+
+            assert(false == predecessor.get());
+            continuation_has_run = true;
+
+        });
+
+    assert(!continuation_has_run);
+    p.set_value(false);
+    assert(continuation_has_run);
+  }
   std::cout << "OK" << std::endl;
 }
-

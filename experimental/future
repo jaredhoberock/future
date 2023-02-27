@@ -25,7 +25,7 @@
 // OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #pragma once
- 
+
 #define __FUTURE_REQUIRES(...) typename std::enable_if<(__VA_ARGS__)>::type* = nullptr
 
 #include <experimental/optional>
@@ -86,10 +86,12 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
     template<class... Arg, __FUTURE_REQUIRES(sizeof...(Arg) == int(!std::is_void<T>::value))>
     void set_value_impl(Arg&&... arg)
     {
-      std::lock_guard<std::mutex> guard(mutex_);
+      std::unique_lock<std::mutex> lock(mutex_);
 
       maybe_result_ = expected<T>(std::forward<Arg>(arg)...);
 
+      // unlock here so that the async_future passed to the continuation below doesn't block in .get()
+      lock.unlock();
       unsafe_invoke_continuation_if();
     }
 
@@ -492,7 +494,7 @@ class future
     {
       return std::experimental::visit(is_ready_visitor(), variant_);
     }
-    
+
   private:
     struct get_visitor
     {
@@ -603,7 +605,6 @@ class promise
       return static_cast<bool>(ptr_to_state_);
     }
 
-  private:
     detail::async_future<T> get_async_future()
     {
       if(!valid())
@@ -862,4 +863,3 @@ async_future<T>::then(const Executor& exec, F&& func)
 } // end std
 
 #undef __FUTURE_REQUIRES
-
