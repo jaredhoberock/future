@@ -116,10 +116,12 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
 
     void set_exception(std::exception_ptr e)
     {
-      std::lock_guard<std::mutex> guard(mutex_);
+      std::unique_lock<std::mutex> lock(mutex_);
 
       maybe_result_ = expected<T>(e);
 
+      // unlock here so that the async_future passed to the continuation below doesn't block in .get()
+      lock.unlock();
       unsafe_invoke_continuation_if();
     }
 
