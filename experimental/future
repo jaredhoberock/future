@@ -168,6 +168,7 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
         lock.unlock();
 
         continuation(to_async_future());
+        continuation_complete_  = true;
       }
       else
       {
@@ -178,6 +179,11 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
 
     async_future<T> to_async_future();
 
+    bool continuation_complete() const
+    {
+        return continuation_complete_;
+    }
+
   private:
     // invokes the continuation, if it exists
     void unsafe_invoke_continuation_if()
@@ -185,6 +191,7 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
       if(continuation_)
       {
         continuation_(to_async_future());
+        continuation_complete_  = true;
       }
     }
 
@@ -195,6 +202,7 @@ class asynchronous_state : public std::enable_shared_from_this<asynchronous_stat
 
     // asynchronous_state may or may not have a continuation stored in it
     hacky_unique_function<void(async_future<T>)> continuation_;
+    bool continuation_complete_ = false;
 };
 
 
@@ -731,7 +739,7 @@ class promise
 
     bool future_retrieved() const
     {
-      return ptr_to_state_.use_count() > 1;
+      return ptr_to_state_.use_count() > 1 or ptr_to_state_->continuation_complete();
     }
 
     bool promise_satisfied() const
